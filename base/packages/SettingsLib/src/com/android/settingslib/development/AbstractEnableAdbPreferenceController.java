@@ -35,6 +35,10 @@ import androidx.preference.TwoStatePreference;
 
 import com.android.settingslib.RestrictedSwitchPreference;
 import com.android.settingslib.core.ConfirmationDialogController;
+//SDD:modify AR-202507-001390 by huan.liu5 2025/07/11 start
+import android.os.SystemProperties;
+import android.util.Log;
+//SDD:modify AR-202507-001390 by huan.liu5 2025/07/11 end
 
 public abstract class AbstractEnableAdbPreferenceController extends
         DeveloperOptionsPreferenceController implements ConfirmationDialogController {
@@ -131,6 +135,12 @@ public abstract class AbstractEnableAdbPreferenceController extends
     }
 
     protected void writeAdbSetting(boolean enabled) {
+        //SDD:modify AR-202507-001390 by huan.liu5 2025/07/11 start
+        if("1".equals(SystemProperties.get("persist.sys.adb.enable", "0"))){
+            Log.i("ADB_ENABLED","ActivityManager.isUserAMonkey() = " + ActivityManager.isUserAMonkey());
+            return;
+        }
+        //SDD:modify AR-202507-001390 by huan.liu5 2025/07/11 end
         Settings.Global.putInt(mContext.getContentResolver(),
                 Settings.Global.ADB_ENABLED, enabled ? ADB_SETTING_ON : ADB_SETTING_OFF);
         notifyStateChanged();

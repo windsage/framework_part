@@ -222,7 +222,10 @@ public class CameraCaptureSessionImpl extends CameraCaptureSession
         } else if (request.isReprocess() && !isReprocessable()) {
             throw new IllegalArgumentException("this capture session cannot handle reprocess " +
                     "requests");
-        } else if (request.isReprocess() && request.getReprocessableSessionId() != mId) {
+// QTI_BEGIN: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+        } else if (!mDeviceImpl.isPrivilegedApp() &&
+                request.isReprocess() && request.getReprocessableSessionId() != mId) {
+// QTI_END: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
             throw new IllegalArgumentException("capture request was created for another session");
         }
     }
@@ -336,6 +339,30 @@ public class CameraCaptureSessionImpl extends CameraCaptureSession
             }
 
             return addPendingSequence(mDeviceImpl.setRepeatingRequest(request,
+                    createCaptureCallbackProxyWithExecutor(executor, callback), mDeviceExecutor));
+        }
+    }
+
+    /**
+     * Shared Camera capture session API which can be used by the clients
+     * to start streaming.
+     *
+     * @hide
+     */
+    public int startStreaming(List<Surface> surfaces, Executor executor,
+            CaptureCallback callback) throws CameraAccessException {
+
+        synchronized (mDeviceImpl.mInterfaceLock) {
+            checkNotClosed();
+
+            executor = CameraDeviceImpl.checkExecutor(executor, callback);
+
+            if (DEBUG) {
+                Log.v(TAG, mIdString + "startStreaming callback " + callback + " executor"
+                        + " " + executor);
+            }
+
+            return addPendingSequence(mDeviceImpl.startStreaming(surfaces,
                     createCaptureCallbackProxyWithExecutor(executor, callback), mDeviceExecutor));
         }
     }

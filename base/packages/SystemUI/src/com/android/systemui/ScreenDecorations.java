@@ -66,7 +66,6 @@ import android.widget.FrameLayout;
 
 import androidx.annotation.VisibleForTesting;
 
-import com.android.app.viewcapture.ViewCaptureAwareWindowManager;
 import com.android.internal.util.Preconditions;
 import com.android.settingslib.Utils;
 import com.android.systemui.biometrics.data.repository.FacePropertyRepository;
@@ -121,7 +120,12 @@ public class ScreenDecorations implements
             SystemProperties.getBoolean("debug.disable_screen_decorations", false);
     private static final boolean DEBUG_SCREENSHOT_ROUNDED_CORNERS =
             SystemProperties.getBoolean("debug.screenshot_rounded_corners", false);
+// QTI_BEGIN: 2020-03-12: Display: SystemUI: Add support to enable RC & NOTCH dynamically.
 
+    private static int mDisableRoundedCorner =
+            SystemProperties.getInt("vendor.display.disable_rounded_corner", 0);
+
+// QTI_END: 2020-03-12: Display: SystemUI: Add support to enable RC & NOTCH dynamically.
     private static final boolean sToolkitSetFrameRateReadOnly =
             android.view.flags.Flags.toolkitSetFrameRateReadOnly();
     private boolean mDebug = DEBUG_SCREENSHOT_ROUNDED_CORNERS;
@@ -167,7 +171,7 @@ public class ScreenDecorations implements
     ViewGroup mScreenDecorHwcWindow;
     @VisibleForTesting
     ScreenDecorHwcLayer mScreenDecorHwcLayer;
-    private ViewCaptureAwareWindowManager mWindowManager;
+    private WindowManager mWindowManager;
     private int mRotation;
     private UserSettingObserver mColorInversionSetting;
     private DelayableExecutor mExecutor;
@@ -189,7 +193,7 @@ public class ScreenDecorations implements
 
     @VisibleForTesting
     protected void showCameraProtection(@NonNull Path protectionPath, @NonNull Rect bounds) {
-        if (mFaceScanningFactory.shouldShowFaceScanningAnim()) {
+        if (mDebug || mFaceScanningFactory.shouldShowFaceScanningAnim()) {
             DisplayCutoutView overlay = (DisplayCutoutView) getOverlayView(
                     mFaceScanningViewId);
             if (overlay != null) {
@@ -337,7 +341,7 @@ public class ScreenDecorations implements
             FacePropertyRepository facePropertyRepository,
             JavaAdapter javaAdapter,
             CameraProtectionLoader cameraProtectionLoader,
-            ViewCaptureAwareWindowManager viewCaptureAwareWindowManager,
+            WindowManager windowManager,
             @ScreenDecorationsThread Handler handler,
             @ScreenDecorationsThread DelayableExecutor executor) {
         mContext = context;
@@ -353,7 +357,7 @@ public class ScreenDecorations implements
         mLogger = logger;
         mFacePropertyRepository = facePropertyRepository;
         mJavaAdapter = javaAdapter;
-        mWindowManager = viewCaptureAwareWindowManager;
+        mWindowManager = windowManager;
         mHandler = handler;
         mExecutor = executor;
     }
@@ -393,6 +397,12 @@ public class ScreenDecorations implements
                 removeAllOverlays();
                 removeHwcOverlay();
                 setupDecorations();
+            });
+        }
+
+        if (cmd.getFaceAuthScreen() != null) {
+            mExecutor.execute(() -> {
+                debugTriggerFaceAuth(cmd.getFaceAuthScreen());
             });
         }
     };
@@ -630,6 +640,15 @@ public class ScreenDecorations implements
         }
     }
 
+    private void debugTriggerFaceAuth(int screen) {
+        DisplayCutoutView overlay = (DisplayCutoutView) getOverlayView(
+                mFaceScanningViewId);
+        if (overlay != null) {
+            overlay.setDebug(true);
+            mCameraListener.debugFaceAuth(screen);
+        }
+    }
+
     private void setupDecorations() {
         Trace.beginSection("ScreenDecorations#setupDecorations");
         setupDecorationsInner();
@@ -643,12 +662,8 @@ public class ScreenDecorations implements
             List<DecorProvider> decorProviders = getProviders(mHwcScreenDecorationSupport != null);
             removeRedundantOverlayViews(decorProviders);
 
-            if (mHwcScreenDecorationSupport != null) {
-                createHwcOverlay();
-            } else {
-                removeHwcOverlay();
-            }
-
+            // Overlays are added in 2 steps: first the standard overlays. Then, if applicable, the
+            // HWC overlays. This ensures that the HWC overlays are always on top
             boolean[] hasCreatedOverlay = new boolean[BOUNDS_POSITION_LENGTH];
             final boolean shouldOptimizeVisibility = shouldOptimizeVisibility();
             Integer bound;
@@ -663,6 +678,13 @@ public class ScreenDecorations implements
                 if (!hasCreatedOverlay[i]) {
                     removeOverlay(i);
                 }
+            }
+
+            // Adding the HWC overlays second so they are on top by default
+            if (mHwcScreenDecorationSupport != null) {
+                createHwcOverlay();
+            } else {
+                removeHwcOverlay();
             }
 
             if (shouldOptimizeVisibility) {
@@ -921,7 +943,6 @@ public class ScreenDecorations implements
                 WindowManager.LayoutParams.TYPE_NAVIGATION_BAR_PANEL,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_SPLIT_TOUCH
                         | WindowManager.LayoutParams.FLAG_SLIPPERY
                         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
@@ -1251,6 +1272,12 @@ public class ScreenDecorations implements
     }
 
     static boolean shouldDrawCutout(Context context) {
+// QTI_BEGIN: 2020-03-12: Display: SystemUI: Add support to enable RC & NOTCH dynamically.
+        if (mDisableRoundedCorner == 1) {
+           return false;
+        }
+
+// QTI_END: 2020-03-12: Display: SystemUI: Add support to enable RC & NOTCH dynamically.
         return DisplayCutout.getFillBuiltInDisplayCutout(
                 context.getResources(), context.getDisplay().getUniqueId());
     }
@@ -1361,6 +1388,7 @@ public class ScreenDecorations implements
         final List<Rect> mBounds = new ArrayList();
         final Rect mBoundingRect = new Rect();
         Rect mTotalBounds = new Rect();
+        boolean mDebug = false;
 
         private int mColor = Color.BLACK;
         private int mRotation;
@@ -1377,6 +1405,10 @@ public class ScreenDecorations implements
                 getViewTreeObserver().addOnDrawListener(() -> Log.i(TAG,
                         getWindowTitleByPos(pos) + " drawn in rot " + mRotation));
             }
+        }
+
+        public void setDebug(boolean debug) {
+            mDebug = debug;
         }
 
         public void setColor(int color) {

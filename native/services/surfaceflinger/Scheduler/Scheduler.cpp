@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 #undef LOG_TAG
 #define LOG_TAG "Scheduler"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
@@ -124,7 +132,10 @@ void Scheduler::setPacesetterDisplay(PhysicalDisplayId pacesetterId) {
     // Cancel the pending refresh rate change, if any, before updating the phase configuration.
     mVsyncModulator->cancelRefreshRateChange();
 
-    mVsyncConfiguration->reset();
+    {
+        std::scoped_lock lock{mVsyncConfigLock};
+        mVsyncConfiguration->reset();
+    }
     updatePhaseConfiguration(pacesetterId, pacesetterSelectorPtr()->getActiveMode().fps);
 }
 
@@ -211,7 +222,7 @@ void Scheduler::onFrameSignal(ICompositor& compositor, VsyncId vsyncId,
              .vsyncId = vsyncId,
              .expectedVsyncTime = expectedVsyncTime,
              .sfWorkDuration = mVsyncModulator->getVsyncConfig().sfWorkDuration,
-             .hwcMinWorkDuration = mVsyncConfiguration->getCurrentConfigs().hwcMinWorkDuration,
+             .hwcMinWorkDuration = getCurrentVsyncConfigs().hwcMinWorkDuration,
              .debugPresentTimeDelay = debugPresentDelay};
 
     ftl::NonNull<const Display*> pacesetterPtr = pacesetterPtrLocked();
@@ -516,11 +527,25 @@ void Scheduler::updatePhaseConfiguration(PhysicalDisplayId displayId, Fps refres
     if (!isPacesetter) return;
 
     mRefreshRateStats->setRefreshRate(refreshRate);
-    mVsyncConfiguration->setRefreshRateFps(refreshRate);
-    setVsyncConfig(mVsyncModulator->setVsyncConfigSet(mVsyncConfiguration->getCurrentConfigs()),
-                   refreshRate.getPeriod());
+    const auto currentConfigs = [=, this] {
+        std::scoped_lock lock{mVsyncConfigLock};
+        mVsyncConfiguration->setRefreshRateFps(refreshRate);
+        return mVsyncConfiguration->getCurrentConfigs();
+    }();
+    setVsyncConfig(mVsyncModulator->setVsyncConfigSet(currentConfigs), refreshRate.getPeriod());
 }
 #pragma clang diagnostic pop
+
+void Scheduler::reloadPhaseConfiguration(Fps refreshRate, Duration minSfDuration,
+                                         Duration maxSfDuration, Duration appDuration) {
+    const auto currentConfigs = [=, this] {
+        std::scoped_lock lock{mVsyncConfigLock};
+        mVsyncConfiguration = std::make_unique<impl::WorkDuration>(refreshRate, minSfDuration,
+                                                                   maxSfDuration, appDuration);
+        return mVsyncConfiguration->getCurrentConfigs();
+    }();
+    setVsyncConfig(mVsyncModulator->setVsyncConfigSet(currentConfigs), refreshRate.getPeriod());
+}
 
 void Scheduler::setActiveDisplayPowerModeForRefreshRateStats(hal::PowerMode powerMode) {
     mRefreshRateStats->setPowerMode(powerMode);
@@ -554,8 +579,7 @@ void Scheduler::resyncAllToHardwareVsync(bool allowToEnable) {
     ftl::FakeGuard guard(kMainThreadContext);
 
     for (const auto& [id, display] : mDisplays) {
-        if (display.powerMode != hal::PowerMode::OFF ||
-            !FlagManager::getInstance().multithreaded_present()) {
+        if (display.powerMode != hal::PowerMode::OFF) {
             resyncToHardwareVsyncLocked(id, allowToEnable);
         }
     }
@@ -897,8 +921,11 @@ void Scheduler::dump(utils::Dumper& dumper) const {
     mFrameRateOverrideMappings.dump(dumper);
     dumper.eol();
 
-    mVsyncConfiguration->dump(dumper.out());
-    dumper.eol();
+    {
+        std::scoped_lock lock{mVsyncConfigLock};
+        mVsyncConfiguration->dump(dumper.out());
+        dumper.eol();
+    }
 
     mRefreshRateStats->dump(dumper.out());
     dumper.eol();
@@ -961,11 +988,6 @@ bool Scheduler::updateFrameRateOverridesLocked(GlobalSignals consideredSignals,
     return mFrameRateOverrideMappings.updateFrameRateOverridesByContent(frameRateOverrides);
 }
 
-void Scheduler::addBufferStuffedUids(BufferStuffingMap bufferStuffedUids) {
-    if (!mRenderEventThread) return;
-    mRenderEventThread->addBufferStuffedUids(std::move(bufferStuffedUids));
-}
-
 void Scheduler::promotePacesetterDisplay(PhysicalDisplayId pacesetterId, PromotionParams params) {
     std::shared_ptr<VsyncSchedule> pacesetterVsyncSchedule;
     {
@@ -986,7 +1008,7 @@ std::shared_ptr<VsyncSchedule> Scheduler::promotePacesetterDisplayLocked(
     if (const auto pacesetterOpt = pacesetterDisplayLocked()) {
         const Display& pacesetter = *pacesetterOpt;
 
-        if (!FlagManager::getInstance().connected_display() || params.toggleIdleTimer) {
+        if (params.toggleIdleTimer) {
             pacesetter.selectorPtr->setIdleTimerCallbacks(
                     {.platform = {.onReset = [this] { idleTimerCallback(TimerState::Reset); },
                                   .onExpired = [this] { idleTimerCallback(TimerState::Expired); }},
@@ -1018,7 +1040,7 @@ void Scheduler::applyNewVsyncSchedule(std::shared_ptr<VsyncSchedule> vsyncSchedu
 }
 
 void Scheduler::demotePacesetterDisplay(PromotionParams params) {
-    if (!FlagManager::getInstance().connected_display() || params.toggleIdleTimer) {
+    if (params.toggleIdleTimer) {
         // No need to lock for reads on kMainThreadContext.
         if (const auto pacesetterPtr =
                     FTL_FAKE_GUARD(mDisplayLock, pacesetterSelectorPtrLocked())) {
@@ -1179,6 +1201,14 @@ auto Scheduler::applyPolicy(S Policy::*statePtr, T&& newState) -> GlobalSignals 
                     updateFrameRateOverridesLocked(consideredSignals, modeOpt->fps);
         }
         if (mPolicy.modeOpt != modeOpt) {
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+            // Need a null pointer check for mPolicy since it's null during boot up
+            std::string str = "UpdateRefreshRate " +
+                    (!mPolicy.modeOpt ? "NA" : std::to_string(mPolicy.modeOpt->fps.getIntValue())) +
+                    " to " + std::to_string(modeOpt->fps.getIntValue());
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+            SFTRACE_NAME(str.c_str());
+
             mPolicy.modeOpt = modeOpt;
             refreshRateChanged = true;
         } else if (consideredSignals.shouldEmitEvent()) {
@@ -1337,4 +1367,23 @@ bool Scheduler::isSmallDirtyArea(int32_t appId, uint32_t dirtyArea) {
     return false;
 }
 
+// QTI_BEGIN: 2023-04-17: Display: sf: Add support for thermal fps
+void Scheduler::qtiUpdateThermalFps(float fps) {
+    mQtiThermalFps = fps;
+    mLayerHistory.qtiUpdateThermalFps(fps);
+}
+// QTI_END: 2023-04-17: Display: sf: Add support for thermal fps
+// QTI_BEGIN: 2024-02-29: Display: sf: consider smomo vote for content detection
+
+void Scheduler::qtiUpdateSmoMoRefreshRateVote(std::map<int, int>& refresh_rate_votes) {
+  mLayerHistory.qtiUpdateSmoMoRefreshRateVote(refresh_rate_votes);
+}
+// QTI_END: 2024-02-29: Display: sf: consider smomo vote for content detection
+// QTI_BEGIN: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
+
+bool Scheduler::isGameFrameRateOverridePresent() {
+    return mLayerHistory.isGameFrameRateOverridePresent();
+}
+
+// QTI_END: 2025-02-12: Display: sf: avoid smomo override when game frame rate override is present
 } // namespace android::scheduler

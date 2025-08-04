@@ -60,8 +60,12 @@ import com.android.server.wm.ActivityStarter.DefaultFactory;
 import com.android.server.wm.ActivityStarter.Factory;
 
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.List;
-
+//T-HUB Core[SPD]:added for animation boost by song.tang 20231027 start
+import com.transsion.hubcore.cpubooster.ITranBoostScene;
+import com.transsion.hubcore.router.ITranPeformanceRouter;
+//T-HUB Core[SPD]:added for animation boost by song.tang 20231027 end
 /**
  * Controller for delegating activity launches.
  *
@@ -96,6 +100,9 @@ public class ActivityStartController {
 
     /** Whether an {@link ActivityStarter} is currently executing (starting an Activity). */
     private boolean mInExecution = false;
+
+    /** The {@link TaskDisplayArea}s that are currently starting home activity. */
+    private ArrayList<TaskDisplayArea> mHomeLaunchingTaskDisplayAreas = new ArrayList<>();
 
     /**
      * TODO(b/64750076): Capture information necessary for dump and
@@ -162,6 +169,11 @@ public class ActivityStartController {
 
     void startHomeActivity(Intent intent, ActivityInfo aInfo, String reason,
             TaskDisplayArea taskDisplayArea) {
+        if (mHomeLaunchingTaskDisplayAreas.contains(taskDisplayArea)) {
+            Slog.e(TAG, "Abort starting home on " + taskDisplayArea + " recursively.");
+            return;
+        }
+
         final ActivityOptions options = ActivityOptions.makeBasic();
         options.setLaunchWindowingMode(WINDOWING_MODE_FULLSCREEN);
         if (!ActivityRecord.isResolverActivity(aInfo.name)) {
@@ -186,13 +198,18 @@ public class ActivityStartController {
             mSupervisor.endDeferResume();
         }
 
-        mLastHomeActivityStartResult = obtainStarter(intent, "startHomeActivity: " + reason)
-                .setOutActivity(tmpOutRecord)
-                .setCallingUid(0)
-                .setActivityInfo(aInfo)
-                .setActivityOptions(options.toBundle(),
-                        Binder.getCallingPid(), Binder.getCallingUid())
-                .execute();
+        try {
+            mHomeLaunchingTaskDisplayAreas.add(taskDisplayArea);
+            mLastHomeActivityStartResult = obtainStarter(intent, "startHomeActivity: " + reason)
+                    .setOutActivity(tmpOutRecord)
+                    .setCallingUid(0)
+                    .setActivityInfo(aInfo)
+                    .setActivityOptions(options.toBundle(),
+                            Binder.getCallingPid(), Binder.getCallingUid())
+                    .execute();
+        } finally {
+            mHomeLaunchingTaskDisplayAreas.remove(taskDisplayArea);
+        }
         mLastHomeActivityStartRecord = tmpOutRecord[0];
         if (rootHomeTask.mInResumeTopActivity) {
             // If we are in resume section already, home activity will be initialized, but not
@@ -479,9 +496,9 @@ public class ActivityStartController {
                             }
                         } catch (SecurityException securityException) {
                             ActivityStarter.logAndThrowExceptionForIntentRedirect(mService.mContext,
-                                    "Creator URI Grant Caused Exception.", intent, creatorUid,
-                                    creatorPackage, filterCallingUid, callingPackage,
-                                    securityException);
+                                    ActivityStarter.INTENT_REDIRECT_EXCEPTION_GRANT_URI_PERMISSION,
+                                    intent, creatorUid, creatorPackage, filterCallingUid,
+                                    callingPackage, securityException);
                         }
                     }
                     if ((aInfo.applicationInfo.privateFlags
@@ -618,11 +635,17 @@ public class ActivityStartController {
     boolean startExistingRecentsIfPossible(Intent intent, ActivityOptions options) {
         try {
             Trace.traceBegin(Trace.TRACE_TAG_WINDOW_MANAGER, "startExistingRecents");
+            //T-HUB Core[SPD]:added for boost start home by song.tang 20250507 start
+            ITranPeformanceRouter.Instance().postEvent("START_HOME_ONDISPLAY");
+            //T-HUB Core[SPD]:added for boost start home by song.tang 20250507 end
             if (startExistingRecents(intent, options)) {
                 return true;
             }
             // Else follow the standard launch procedure.
         } finally {
+            //T-HUB Core[SPD]:added for boost start home by song.tang 20250507 start
+            ITranPeformanceRouter.Instance().postEvent("STOP_HOME_ONDISPLAY");
+            //T-HUB Core[SPD]:added for boost start home by song.tang 20250507 end
             Trace.traceEnd(Trace.TRACE_TAG_WINDOW_MANAGER);
         }
         return false;
@@ -651,6 +674,9 @@ public class ActivityStartController {
         try {
             final Transition transition = r.mTransitionController.getCollectingTransition();
             if (transition != null) {
+                //T-HUB Core[SPD]:added for animation boost by song.tang 20240415 start
+                ITranBoostScene.Instance().startTransitionBoost(transition.mType, null, null, true);
+                // T-HUB Core[SPD]:added for animation boost by song.tang 20240415 end
                 transition.setRemoteAnimationApp(r.app.getThread());
                 transition.setTransientLaunch(r, TaskDisplayArea.getRootTaskAbove(rootTask));
             }
@@ -718,6 +744,12 @@ public class ActivityStartController {
                     return;
                 }
             }
+        }
+
+        if (!mHomeLaunchingTaskDisplayAreas.isEmpty()) {
+            dumped = true;
+            pw.print(prefix);
+            pw.println("mHomeLaunchingTaskDisplayAreas:" + mHomeLaunchingTaskDisplayAreas);
         }
 
         if (!dumped) {

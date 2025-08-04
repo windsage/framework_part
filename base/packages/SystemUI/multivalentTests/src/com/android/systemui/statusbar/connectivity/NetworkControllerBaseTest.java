@@ -262,7 +262,6 @@ public class NetworkControllerBaseTest extends SysuiTestCase {
                 mWifiStatusTrackerFactory,
                 mMobileFactory,
                 mMainHandler,
-                mock(DumpManager.class),
                 mock(LogBuffer.class)
         );
         setupNetworkController();
@@ -674,14 +673,6 @@ public class NetworkControllerBaseTest extends SysuiTestCase {
             assertEquals("Type content description (html)", typeContentDescriptionHtml,
                     expected.typeContentDescriptionHtml);
         }
-    }
-
-    protected void verifyLastCallStrength(int icon) {
-        ArgumentCaptor<IconState> iconArg = ArgumentCaptor.forClass(IconState.class);
-        verify(mCallbackHandler, Mockito.atLeastOnce()).setCallIndicator(
-                iconArg.capture(),
-                anyInt());
-        assertEquals("Call strength, in status bar", icon, (int) iconArg.getValue().icon);
     }
 
     protected void assertNetworkNameEquals(String expected) {

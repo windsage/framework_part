@@ -35,6 +35,7 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemProperties;
 import android.os.Trace;
+import android.util.DisplayMetrics;
 import android.util.DisplayUtils;
 import android.util.LongSparseArray;
 import android.util.Slog;
@@ -81,6 +82,12 @@ final class LocalDisplayAdapter extends DisplayAdapter {
     private static final String UNIQUE_ID_PREFIX = "local:";
 
     private static final String PROPERTY_EMULATOR_CIRCULAR = "ro.boot.emulator.circular";
+
+    private static final double DEFAULT_DISPLAY_SIZE = 24.0;
+    // Touch target size 10.4mm in inches (divided by mm per inch 25.4)
+    private static final double EXTERNAL_DISPLAY_BASE_TOUCH_TARGET_SIZE_IN_INCHES = 10.4 / 25.4;
+
+    private static final double BASE_TOUCH_TARGET_SIZE_DP = 48.0;
 
     private final LongSparseArray<LocalDisplayDevice> mDevices = new LongSparseArray<>();
 
@@ -198,21 +205,6 @@ final class LocalDisplayAdapter extends DisplayAdapter {
             // Display was removed.
             mDevices.remove(physicalDisplayId);
             sendDisplayDeviceEventLocked(device, DISPLAY_DEVICE_EVENT_REMOVED);
-        }
-    }
-
-    static int getPowerModeForState(int state) {
-        switch (state) {
-            case Display.STATE_OFF:
-                return SurfaceControl.POWER_MODE_OFF;
-            case Display.STATE_DOZE:
-                return SurfaceControl.POWER_MODE_DOZE;
-            case Display.STATE_DOZE_SUSPEND:
-                return SurfaceControl.POWER_MODE_DOZE_SUSPEND;
-            case Display.STATE_ON_SUSPEND:
-                return SurfaceControl.POWER_MODE_ON_SUSPEND;
-            default:
-                return SurfaceControl.POWER_MODE_NORMAL;
         }
     }
 
@@ -525,6 +517,24 @@ final class LocalDisplayAdapter extends DisplayAdapter {
         private int getLogicalDensity() {
             DensityMapping densityMapping = getDisplayDeviceConfig().getDensityMapping();
             if (densityMapping == null) {
+                if (getFeatureFlags().isBaseDensityForExternalDisplaysEnabled()
+                        && !mStaticDisplayInfo.isInternal) {
+                    double ppi;
+
+                    if (mActiveSfDisplayMode.xDpi > 0 && mActiveSfDisplayMode.yDpi > 0) {
+                        ppi = Math.sqrt((Math.pow(mActiveSfDisplayMode.xDpi, 2)
+                                + Math.pow(mActiveSfDisplayMode.yDpi, 2)) / 2);
+                    } else {
+                        // xDPI and yDPI is missing, calculate DPI from display resolution and
+                        // default display size
+                        ppi = Math.sqrt(Math.pow(mInfo.width, 2) + Math.pow(mInfo.height, 2))
+                                / DEFAULT_DISPLAY_SIZE;
+                    }
+                    double pixels = ppi * EXTERNAL_DISPLAY_BASE_TOUCH_TARGET_SIZE_IN_INCHES;
+                    double dpi =
+                            pixels * DisplayMetrics.DENSITY_DEFAULT / BASE_TOUCH_TARGET_SIZE_DP;
+                    return (int) (dpi + 0.5);
+                }
                 return (int) (mStaticDisplayInfo.density * 160 + 0.5);
             }
 
@@ -746,6 +756,12 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 }
 
                 final Resources res = getOverlayContext().getResources();
+// QTI_BEGIN: 2019-05-01: Display: Add support to check for Built-in Display
+                final boolean isBuiltIn = ((mInfo.address) != null) ?
+// QTI_END: 2019-05-01: Display: Add support to check for Built-in Display
+// QTI_BEGIN: 2021-05-02: Display: Check for builtin display with bitmask
+                   ((((DisplayAddress.Physical) mInfo.address).getPort() & 0x80) == 0x80) : false;
+// QTI_END: 2021-05-02: Display: Check for builtin display with bitmask
 
                 mInfo.flags |= DisplayDeviceInfo.FLAG_ALLOWED_TO_BE_DEFAULT_DISPLAY;
 
@@ -755,8 +771,34 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                             && SystemProperties.getBoolean(PROPERTY_EMULATOR_CIRCULAR, false))) {
                         mInfo.flags |= DisplayDeviceInfo.FLAG_ROUND;
                     }
+// QTI_BEGIN: 2019-05-01: Display: Add support to check for Built-in Display
+                } else if (isBuiltIn) {
+// QTI_END: 2019-05-01: Display: Add support to check for Built-in Display
+                    mInfo.type = Display.TYPE_INTERNAL;
+// QTI_BEGIN: 2019-05-01: Display: Add support to check for Built-in Display
+                    mInfo.touch = DisplayDeviceInfo.TOUCH_INTERNAL;
+                    mInfo.name = getContext().getResources().getString(
+                            com.android.internal.R.string.display_manager_built_in_display_name);
+                    mInfo.flags |= DisplayDeviceInfo.FLAG_ROTATES_WITH_CONTENT;
+
+                    if (SystemProperties.getBoolean(
+                                    "vendor.display.builtin_presentation", false)) {
+                        mInfo.flags |= DisplayDeviceInfo.FLAG_PRESENTATION;
+                    } else {
+                        mInfo.flags |= DisplayDeviceInfo.FLAG_PRIVATE;
+                    }
+
+                    if (!SystemProperties.getBoolean(
+                                    "vendor.display.builtin_mirroring", false)) {
+                        mInfo.flags |= DisplayDeviceInfo.FLAG_OWN_CONTENT_ONLY;
+                    }
+
+// QTI_END: 2019-05-01: Display: Add support to check for Built-in Display
+                    mInfo.setAssumedDensityForExternalDisplay(mActiveSfDisplayMode.width, mActiveSfDisplayMode.height);
+// QTI_BEGIN: 2019-04-08: Display: Revert "display: Add support for multiple displays"
                 } else {
-                    if (!res.getBoolean(R.bool.config_localDisplaysMirrorContent)) {
+// QTI_END: 2019-04-08: Display: Revert "display: Add support for multiple displays"
+                    if (shouldOwnContentOnly()) {
                         mInfo.flags |= DisplayDeviceInfo.FLAG_OWN_CONTENT_ONLY;
                     }
 
@@ -767,6 +809,15 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                     if (isDisplayStealTopFocusDisabled(physicalAddress)) {
                         mInfo.flags |= DisplayDeviceInfo.FLAG_OWN_FOCUS;
                         mInfo.flags |= DisplayDeviceInfo.FLAG_STEAL_TOP_FOCUS_DISABLED;
+                    }
+                }
+
+                if (getFeatureFlags().isDisplayContentModeManagementEnabled()) {
+                    // Public display with FLAG_OWN_CONTENT_ONLY disabled is allowed to switch the
+                    // content mode.
+                    if (mIsFirstDisplay
+                            || (!isDisplayPrivate(physicalAddress) && !shouldOwnContentOnly())) {
+                        mInfo.flags |= DisplayDeviceInfo.FLAG_ALLOWS_CONTENT_MODE_SWITCH;
                     }
                 }
 
@@ -812,6 +863,7 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                                 R.string.display_manager_hdmi_display_name);
                     }
                 }
+
                 mInfo.frameRateOverrides = mFrameRateOverrides;
 
                 // The display is trusted since it is created by system.
@@ -833,11 +885,15 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 @Nullable DisplayOffloadSessionImpl displayOffloadSession) {
 
             // Assume that the brightness is off if the display is being turned off.
+// QTI_BEGIN: 2023-06-13: Display: Revert "Revert "Use exact brightnesses values for comparison.""
             assert state != Display.STATE_OFF
                     || brightnessState == PowerManager.BRIGHTNESS_OFF_FLOAT;
+// QTI_END: 2023-06-13: Display: Revert "Revert "Use exact brightnesses values for comparison.""
             final boolean stateChanged = (mState != state);
+// QTI_BEGIN: 2023-06-13: Display: Revert "Revert "Use exact brightnesses values for comparison.""
             final boolean brightnessChanged = mBrightnessState != brightnessState
                     || mSdrBrightnessState != sdrBrightnessState;
+// QTI_END: 2023-06-13: Display: Revert "Revert "Use exact brightnesses values for comparison.""
             if (stateChanged || brightnessChanged) {
                 final long physicalDisplayId = mPhysicalDisplayId;
                 final IBinder token = getDisplayTokenLocked();
@@ -1013,7 +1069,9 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                     }
 
                     private float brightnessToBacklight(float brightness) {
+// QTI_BEGIN: 2023-06-13: Display: Revert "Revert "Use exact brightnesses values for comparison.""
                         if (brightness == PowerManager.BRIGHTNESS_OFF_FLOAT) {
+// QTI_END: 2023-06-13: Display: Revert "Revert "Use exact brightnesses values for comparison.""
                             return PowerManager.BRIGHTNESS_OFF_FLOAT;
                         } else {
                             return getDisplayDeviceConfig().getBacklightFromBrightness(brightness);
@@ -1455,6 +1513,11 @@ final class LocalDisplayAdapter extends DisplayAdapter {
                 }
             }
             return false;
+        }
+
+        private boolean shouldOwnContentOnly() {
+            final Resources res = getOverlayContext().getResources();
+            return !res.getBoolean(R.bool.config_localDisplaysMirrorContent);
         }
 
         private boolean isDisplayStealTopFocusDisabled(DisplayAddress.Physical physicalAddress) {

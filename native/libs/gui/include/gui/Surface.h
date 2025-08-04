@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 #ifndef ANDROID_GUI_SURFACE_H
 #define ANDROID_GUI_SURFACE_H
 
@@ -34,8 +42,22 @@
 #include <shared_mutex>
 #include <unordered_set>
 
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+#include "../../QtiExtension/QtiSurfaceExtension.h"
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+#include "../../QtiExtension/QtiSurfaceExtensionGPP.h"
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 namespace android {
 
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+namespace libguiextension {
+class QtiSurfaceExtension;
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+class QtiSurfaceExtensionGPP;
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+}
 class GraphicBuffer;
 
 namespace gui {
@@ -442,6 +464,9 @@ public:
     status_t detachBuffer(const sp<GraphicBuffer>& buffer);
 #endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
 
+    // Sets outIsOwned to true if the given buffer is currently known to be owned by this Surface.
+    status_t isBufferOwned(const sp<GraphicBuffer>& buffer, bool* outIsOwned) const;
+
     // Batch version of dequeueBuffer, cancelBuffer and queueBuffer
     // Note that these batched operations are not supported when shared buffer mode is being used.
     struct BatchBuffer {
@@ -539,6 +564,11 @@ protected:
         Region dirtyRegion;
     };
 
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+    friend class libguiextension::QtiSurfaceExtension;
+    libguiextension::QtiSurfaceExtension* mQtiSurfaceExtn = nullptr;
+
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     // mSurfaceTexture is the interface to the surface texture server. All
     // operations on the surface texture client ultimately translate into
     // interactions with the server using this interface.
@@ -558,7 +588,11 @@ protected:
     // slot that has not yet been used. The buffer allocated to a slot will also
     // be replaced if the requested buffer usage or geometry differs from that
     // of the buffer allocated to a slot.
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    std::vector<BufferSlot> mSlots;
+#else
     BufferSlot mSlots[NUM_BUFFER_SLOTS];
+#endif
 
     // mReqWidth is the buffer width that will be requested at the next dequeue
     // operation. It is initialized to 1.
@@ -732,6 +766,10 @@ protected:
     std::vector<sp<GraphicBuffer>> mRemovedBuffers;
     int mMaxBufferCount;
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    bool mIsSlotExpansionAllowed;
+#endif
+
     sp<IProducerListener> mListenerProxy;
 
     // Get and flush the buffers of given slots, if the buffer in the slot
@@ -742,6 +780,10 @@ protected:
 
     // Buffers that are successfully dequeued/attached and handed to clients
     std::unordered_set<int> mDequeuedSlots;
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+
+    std::shared_ptr<libguiextension::QtiSurfaceExtensionGPP> mQtiSurfaceGPPExtn = nullptr;
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 };
 
 } // namespace android

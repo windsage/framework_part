@@ -124,7 +124,6 @@ struct WindowInfo : public Parcelable {
         DOCK_DIVIDER = FIRST_SYSTEM_WINDOW_ + 34,
         ACCESSIBILITY_MAGNIFICATION_OVERLAY = FIRST_SYSTEM_WINDOW_ + 39,
         NOTIFICATION_SHADE = FIRST_SYSTEM_WINDOW_ + 40,
-
         FIRST_SYSTEM_WINDOW = FIRST_SYSTEM_WINDOW_,
         LAST_SYSTEM_WINDOW = 2999,
 
@@ -150,8 +149,6 @@ struct WindowInfo : public Parcelable {
                 static_cast<uint32_t>(os::InputConfig::NOT_FOCUSABLE),
         NOT_TOUCHABLE =
                 static_cast<uint32_t>(os::InputConfig::NOT_TOUCHABLE),
-        PREVENT_SPLITTING =
-                static_cast<uint32_t>(os::InputConfig::PREVENT_SPLITTING),
         DUPLICATE_TOUCH_TO_WALLPAPER =
                 static_cast<uint32_t>(os::InputConfig::DUPLICATE_TOUCH_TO_WALLPAPER),
         IS_WALLPAPER =
@@ -220,8 +217,13 @@ struct WindowInfo : public Parcelable {
     // An alpha of 1.0 means fully opaque and 0.0 means fully transparent.
     float alpha;
 
-    // Transform applied to individual windows.
+    // Transform applied to individual windows for input.
+    // Maps display coordinates to the window's input coordinate space.
     ui::Transform transform;
+
+    // Transform applied to get to the layer stack space of the cloned window for input.
+    // Maps display coordinates of the clone window to the layer stack space of the cloned window.
+    std::optional<ui::Transform> cloneLayerStackTransform;
 
     /*
      * This is filled in by the WM relative to the frame and then translated
@@ -265,6 +267,7 @@ struct WindowInfo : public Parcelable {
     bool overlaps(const WindowInfo* other) const;
 
     bool operator==(const WindowInfo& inputChannel) const;
+    bool operator!=(const WindowInfo&) const = default;
 
     status_t writeToParcel(android::Parcel* parcel) const override;
 
@@ -315,6 +318,9 @@ public:
     // Not override since this class is not derrived from Parcelable.
     status_t readFromParcel(const android::Parcel* parcel);
     status_t writeToParcel(android::Parcel* parcel) const;
+
+    bool operator==(const WindowInfoHandle& rhs) const { return mInfo == rhs.mInfo; }
+    bool operator!=(const WindowInfoHandle&) const = default;
 
 protected:
     virtual ~WindowInfoHandle();

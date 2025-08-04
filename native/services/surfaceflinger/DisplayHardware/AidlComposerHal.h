@@ -24,7 +24,7 @@
 #include <functional>
 #include <optional>
 #include <string>
-#include <utility>
+#include <string_view>
 #include <vector>
 
 #include <android/hardware/graphics/composer/2.4/IComposer.h>
@@ -38,6 +38,19 @@
 #include <aidl/android/hardware/graphics/composer3/Composition.h>
 #include <aidl/android/hardware/graphics/composer3/DisplayCapability.h>
 
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+namespace android::surfaceflingerextension {
+class QtiAidlComposerHalExtension;
+}
+
+#include "../QtiExtension/QtiAidlCommandWriter.h"
+#ifdef QTI_COMPOSER3_EXTENSIONS
+#include <aidl/vendor/qti/hardware/display/composer3/IQtiComposer3Client.h>
+using aidl::vendor::qti::hardware::display::composer3::IQtiComposer3Client;
+#endif
+
+
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 namespace android::Hwc2 {
 
 using aidl::android::hardware::graphics::common::DisplayDecorationSupport;
@@ -53,7 +66,8 @@ class AidlIComposerCallbackWrapper;
 // Composer is a wrapper to IComposer, a proxy to server-side composer.
 class AidlComposer final : public Hwc2::Composer {
 public:
-    static bool isDeclared(const std::string& serviceName);
+    // Returns true if serviceName appears to be something that is meant to be used by AidlComposer.
+    static bool namesAnAidlComposerService(std::string_view serviceName);
 
     explicit AidlComposer(const std::string& serviceName);
     ~AidlComposer() override;
@@ -105,6 +119,10 @@ public:
 
     Error getReleaseFences(Display display, std::vector<Layer>* outLayers,
                            std::vector<int>* outReleaseFences) override;
+
+    Error getLayerPresentFences(Display display, std::vector<Layer>* outLayers,
+                                std::vector<int>* outFences,
+                                std::vector<int64_t>* outLatenciesNanos) override;
 
     Error presentDisplay(Display display, int* outPresentFence) override;
 
@@ -245,18 +263,27 @@ public:
     Error getMaxLayerPictureProfiles(Display, int32_t* outMaxProfiles) override;
     Error setDisplayPictureProfileId(Display, PictureProfileId id) override;
     Error setLayerPictureProfileId(Display, Layer, PictureProfileId id) override;
+    Error startHdcpNegotiation(Display, const aidl::android::hardware::drm::HdcpLevels&) override;
+    Error getLuts(Display, const std::vector<sp<GraphicBuffer>>&,
+                  std::vector<aidl::android::hardware::graphics::composer3::Luts>*) override;
 
 private:
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+    friend class android::surfaceflingerextension::QtiAidlComposerHalExtension;
+
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
     // Many public functions above simply write a command into the command
     // queue to batch the calls.  validateDisplay and presentDisplay will call
     // this function to execute the command queue.
     Error execute(Display) REQUIRES_SHARED(mMutex);
 
-    // returns the default instance name for the given service
-    static std::string instance(const std::string& serviceName);
+    // Ensures serviceName is fully qualified.
+    static std::string ensureFullyQualifiedName(std::string_view serviceName);
 
-    ftl::Optional<std::reference_wrapper<ComposerClientWriter>> getWriter(Display)
-            REQUIRES_SHARED(mMutex);
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+    ftl::Optional<std::reference_wrapper< QtiAidlCommandWriter >>
+            getWriter(Display) REQUIRES_SHARED(mMutex);
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
     ftl::Optional<std::reference_wrapper<ComposerClientReader>> getReader(Display)
             REQUIRES_SHARED(mMutex);
     void addDisplay(Display) EXCLUDES(mMutex);
@@ -281,9 +308,12 @@ private:
     // Invalid displayId used as a key to mReaders when mSingleReader is true.
     static constexpr int64_t kSingleReaderKey = 0;
 
-    ui::PhysicalDisplayMap<Display, ComposerClientWriter> mWriters GUARDED_BY(mMutex);
+    // TODO (b/256881188): Use display::PhysicalDisplayMap instead of hard-coded `3`
+    ui::PhysicalDisplayMap<Display, QtiAidlCommandWriter> mWriters
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+            GUARDED_BY(mMutex);
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
     ui::PhysicalDisplayMap<Display, ComposerClientReader> mReaders GUARDED_BY(mMutex);
-
     // Protect access to mWriters and mReaders with a shared_mutex. Adding and
     // removing a display require exclusive access, since the iterator or the
     // writer/reader may be invalidated. Other calls need shared access while
@@ -306,6 +336,11 @@ private:
     std::shared_ptr<AidlIComposer> mAidlComposer;
     std::shared_ptr<AidlIComposerClient> mAidlComposerClient;
     std::shared_ptr<AidlIComposerCallbackWrapper> mAidlComposerCallback;
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+#ifdef QTI_COMPOSER3_EXTENSIONS
+    std::shared_ptr<IQtiComposer3Client> qtiComposer3Client;
+#endif
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 };
 
 } // namespace android::Hwc2

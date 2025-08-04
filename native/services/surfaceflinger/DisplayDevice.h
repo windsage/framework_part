@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 #pragma once
 
 #include <memory>
@@ -23,6 +31,8 @@
 #include <android-base/thread_annotations.h>
 #include <android/native_window.h>
 #include <binder/IBinder.h>
+#include <compositionengine/Display.h>
+#include <compositionengine/DisplaySurface.h>
 #include <gui/LayerState.h>
 #include <math/mat4.h>
 #include <renderengine/RenderEngine.h>
@@ -61,15 +71,20 @@ class SurfaceFlinger;
 struct CompositionInfo;
 struct DisplayDeviceCreationArgs;
 
-namespace compositionengine {
-class Display;
-class DisplaySurface;
-} // namespace compositionengine
-
 namespace display {
 class DisplaySnapshot;
 } // namespace display
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+namespace surfaceflingerextension {
+class QtiDisplaySurfaceExtensionIntf;
+} // namespace surfaceflingerextension
+
+namespace compositionengineextension {
+class QtiDisplayExtension;
+} // namespace compositionengineextension
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 class DisplayDevice : public RefBase {
 public:
     constexpr static float sDefaultMinLumiance = 0.0;
@@ -85,7 +100,7 @@ public:
         return mCompositionDisplay;
     }
 
-    bool isVirtual() const { return getId().isVirtual(); }
+    bool isVirtual() const;
     bool isPrimary() const { return mIsPrimary; }
 
     // isSecure indicates whether this display can be trusted to display
@@ -93,12 +108,17 @@ public:
     bool isSecure() const;
     void setSecure(bool secure);
 
+    // The optimization policy influences whether this display is optimized for power or
+    // performance.
+    gui::ISurfaceComposer::OptimizationPolicy getOptimizationPolicy() const;
+    void setOptimizationPolicy(gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy);
+
     int getWidth() const;
     int getHeight() const;
     ui::Size getSize() const { return {getWidth(), getHeight()}; }
 
     void setLayerFilter(ui::LayerFilter);
-    void setDisplaySize(int width, int height);
+    void setDisplaySize(ui::Size);
     void setProjection(ui::Rotation orientation, Rect viewport, Rect frame);
     void stageBrightness(float brightness) REQUIRES(kMainThreadContext);
     void persistBrightness(bool needsComposite) REQUIRES(kMainThreadContext);
@@ -118,17 +138,30 @@ public:
 
     DisplayId getId() const;
 
+    DisplayIdVariant getDisplayIdVariant() const {
+        const auto idVariant = mCompositionDisplay->getDisplayIdVariant();
+        LOG_FATAL_IF(!idVariant);
+        return *idVariant;
+    }
+
+    std::optional<VirtualDisplayIdVariant> getVirtualDisplayIdVariant() const {
+        return ftl::match(
+                getDisplayIdVariant(),
+                [](PhysicalDisplayId) { return std::optional<VirtualDisplayIdVariant>(); },
+                [](auto id) { return std::optional<VirtualDisplayIdVariant>(id); });
+    }
+
     // Shorthand to upcast the ID of a display whose type is known as a precondition.
     PhysicalDisplayId getPhysicalId() const {
-        const auto id = PhysicalDisplayId::tryCast(getId());
-        LOG_FATAL_IF(!id);
-        return *id;
+        const auto physicalDisplayId = asPhysicalDisplayId(getDisplayIdVariant());
+        LOG_FATAL_IF(!physicalDisplayId);
+        return *physicalDisplayId;
     }
 
     VirtualDisplayId getVirtualId() const {
-        const auto id = VirtualDisplayId::tryCast(getId());
-        LOG_FATAL_IF(!id);
-        return *id;
+        const auto virtualDisplayId = asVirtualDisplayId(getDisplayIdVariant());
+        LOG_FATAL_IF(!virtualDisplayId);
+        return *virtualDisplayId;
     }
 
     const wp<IBinder>& getDisplayToken() const { return mDisplayToken; }
@@ -214,12 +247,22 @@ public:
 
     void dump(utils::Dumper&) const;
 
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+    void qtiResetVsyncPeriod();
+    void qtiSetPowerModeOverrideConfig(bool supported);
+    bool qtiGetPowerModeOverrideConfig() const;
+
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 private:
     const sp<SurfaceFlinger> mFlinger;
     HWComposer& mHwComposer;
     const wp<IBinder> mDisplayToken;
     const int32_t mSequenceId;
 
+// QTI_BEGIN: 2024-07-03: Display: sf: Align Display roi with fb scale
+    bool mUseFbScaling = false;
+
+// QTI_END: 2024-07-03: Display: sf: Align Display roi with fb scale
     const std::shared_ptr<compositionengine::Display> mCompositionDisplay;
 
     std::string mDisplayName;
@@ -235,6 +278,9 @@ private:
 
     // TODO(b/182939859): Remove special cases for primary display.
     const bool mIsPrimary;
+
+    gui::ISurfaceComposer::OptimizationPolicy mOptimizationPolicy =
+            gui::ISurfaceComposer::OptimizationPolicy::optimizeForPerformance;
 
     uint32_t mFlags = 0;
 
@@ -254,12 +300,20 @@ private:
     std::unique_ptr<HdrSdrRatioOverlay> mHdrSdrRatioOverlay;
     // This parameter is only used for hdr/sdr ratio overlay
     float mHdrSdrRatio = 1.0f;
+
+// QTI_BEGIN: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
+    mutable std::mutex mQtiModeLock;
+    mutable bool mQtiVsyncPeriodUpdated = true;
+    mutable nsecs_t mQtiVsyncPeriod = 0;
+    bool mQtiIsPowerModeOverride = false;
+// QTI_END: 2023-01-25: Display: sf: Add SF Binder calls for QTI Extensions
 };
 
 struct DisplayDeviceState {
     struct Physical {
         PhysicalDisplayId id;
         hardware::graphics::composer::hal::HWDisplayId hwcDisplayId;
+        uint8_t port;
         DisplayModePtr activeMode;
 
         bool operator==(const Physical& other) const {
@@ -282,11 +336,16 @@ struct DisplayDeviceState {
     std::string displayName;
     std::string uniqueId;
     bool isSecure = false;
+
+    gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy =
+            gui::ISurfaceComposer::OptimizationPolicy::optimizeForPerformance;
     bool isProtected = false;
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
     Fps requestedRefreshRate;
     int32_t maxLayerPictureProfiles = 0;
     bool hasPictureProcessing = false;
+    hardware::graphics::composer::hal::PowerMode initialPowerMode{
+            hardware::graphics::composer::hal::PowerMode::OFF};
 
 private:
     static std::atomic<int32_t> sNextSequenceId;
@@ -317,6 +376,11 @@ struct DisplayDeviceCreationArgs {
     hardware::graphics::composer::hal::PowerMode initialPowerMode{
             hardware::graphics::composer::hal::PowerMode::OFF};
     bool isPrimary{false};
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    // QTI_BEGIN
+    android::surfaceflingerextension::QtiDisplaySurfaceExtensionIntf* mQtiDSExtnIntf = nullptr;
+    // QTI_END
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     // Refer to DisplayDevice::mRequestedRefreshRate, for virtual display only
     Fps requestedRefreshRate;
 };

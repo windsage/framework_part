@@ -21,6 +21,11 @@ import (
 
 	"android/soong/android"
 	"android/soong/java"
+	//SDD: add for os framework for TESSCR-25238 by yang.tang 20250324 start
+	"os"
+	"path/filepath"
+	"fmt"
+	//SDD: add for os framework for TESSCR-25238 by yang.tang 20250324 end
 )
 
 const art = "art.module.public.api"
@@ -244,6 +249,21 @@ func createMergedPublicStubs(ctx android.LoadHookContext, modules proptools.Conf
 	props := libraryProps{}
 	props.Name = proptools.StringPtr("all-modules-public-stubs")
 	props.Static_libs = modules
+	//T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20240731 start
+	thubs := filepath.Join(android.AbsSrcDirForExistingUseCases(),
+				"vendor/transsion/system_modules/THUB/thub_common/lib/src/main/Android.bp")
+	wthubs := filepath.Join(android.AbsSrcDirForExistingUseCases(),
+				"vendor/transsion/system_modules/THUB/thub_core/libs/thub-common-sdk/Android.bp")
+	_, thuberr := os.Stat(thubs)
+	_, wthuberr := os.Stat(wthubs)
+	if  thuberr == nil {
+		fmt.Printf("vendor/transsion/system_modules/THUB/thub_common/lib/src/main/Android.bp is exist, add thub common sdk stub\n")
+		props.Static_libs.AppendSimpleValue([]string{"thub-common-sdk.stubs"})
+	} else if wthuberr == nil {
+		fmt.Printf("vendor/transsion/system_modules/THUB/thub_core/libs/thub-common-sdk/Android.bp is exist, add thub common sdk stub\n")
+		props.Static_libs.AppendSimpleValue([]string{"thub-common-sdk.stubs"})
+	}
+	//T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20240731 end
 	props.Sdk_version = proptools.StringPtr("module_current")
 	props.Visibility = []string{"//frameworks/base"}
 	props.Is_stubs_module = proptools.BoolPtr(true)
@@ -271,6 +291,19 @@ func createMergedSystemStubs(ctx android.LoadHookContext, modules proptools.Conf
 		props := libraryProps{}
 		props.Name = proptools.StringPtr("all-updatable-modules-system-stubs")
 		props.Static_libs = updatable_modules
+		//T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20240731 start
+		thubs := filepath.Join(android.AbsSrcDirForExistingUseCases(),
+					"vendor/transsion/system_modules/THUB/thub_common/lib/src/main/Android.bp")
+		wthubs := filepath.Join(android.AbsSrcDirForExistingUseCases(),
+					"vendor/transsion/system_modules/THUB/thub_core/libs/thub-common-sdk/Android.bp")
+		if _, err := os.Stat(thubs); err == nil {
+			 fmt.Printf("vendor/transsion/system_modules/THUB/thub_common/lib/src/main/Android.bp is exist, add thub common sdk stub\n")
+			 props.Static_libs.AppendSimpleValue([]string{"thub-common-sdk.stubs.system"})
+		} else if _, err := os.Stat(wthubs); err == nil {
+			 fmt.Printf("vendor/transsion/system_modules/THUB/thub_core/libs/thub-common-sdk/Android.bp is exist, add thub common sdk stub\n")
+			 props.Static_libs.AppendSimpleValue([]string{"thub-common-sdk.stubs.system"})
+		}
+		//T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20240731 end
 		props.Sdk_version = proptools.StringPtr("module_current")
 		props.Visibility = []string{"//frameworks/base"}
 		props.Is_stubs_module = proptools.BoolPtr(true)
@@ -350,6 +383,8 @@ func createMergedFrameworkImpl(ctx android.LoadHookContext, modules proptools.Co
 	// First create updatable-framework-module-impl, which contains all updatable modules.
 	// This module compiles against module_lib SDK.
 	{
+		// TODO(b/214988855): remove the line below when framework-bluetooth has an impl jar.
+		removeAll(modules, []string{"framework-bluetooth"})
 		transformConfigurableArray(modules, "", ".impl")
 		props := libraryProps{}
 		props.Name = proptools.StringPtr("updatable-framework-module-impl")
@@ -399,6 +434,21 @@ func createMergedFrameworkModuleLibStubs(ctx android.LoadHookContext, modules pr
 	props := libraryProps{}
 	props.Name = proptools.StringPtr("framework-updatable-stubs-module_libs_api")
 	props.Static_libs = modules
+	//T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20240731 start
+	thubs := filepath.Join(android.AbsSrcDirForExistingUseCases(),
+				"vendor/transsion/system_modules/THUB/thub_common/lib/src/main/Android.bp")
+	wthubs := filepath.Join(android.AbsSrcDirForExistingUseCases(),
+				"vendor/transsion/system_modules/THUB/thub_core/libs/thub-common-sdk/Android.bp")
+	_, thuberr := os.Stat(thubs)
+	_, wthuberr := os.Stat(wthubs)
+	if  thuberr == nil {
+		fmt.Printf("vendor/transsion/system_modules/THUB/thub_common/lib/src/main/Android.bp is exist, add thub common sdk stub\n")
+		props.Static_libs.AppendSimpleValue([]string{"thub-common-sdk.stubs.module_lib"})
+	} else if wthuberr == nil {
+		fmt.Printf("vendor/transsion/system_modules/THUB/thub_core/libs/thub-common-sdk/Android.bp is exist, add thub common sdk stub\n")
+		props.Static_libs.AppendSimpleValue([]string{"thub-common-sdk.stubs.module_lib"})
+	}
+	//T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20240731 end
 	props.Sdk_version = proptools.StringPtr("module_current")
 	props.Visibility = []string{"//frameworks/base"}
 	props.Is_stubs_module = proptools.BoolPtr(true)

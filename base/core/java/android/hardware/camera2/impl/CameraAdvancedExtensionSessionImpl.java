@@ -1188,7 +1188,6 @@ public final class CameraAdvancedExtensionSessionImpl extends CameraExtensionSes
             } catch (IllegalStateException e) {
                 Log.e(TAG, "Capture session closed!");
             }
-
             return seqId;
         }
 
@@ -1212,7 +1211,6 @@ public final class CameraAdvancedExtensionSessionImpl extends CameraExtensionSes
             } catch (IllegalStateException e) {
                 Log.e(TAG, "Capture session closed!");
             }
-
             return seqId;
         }
 

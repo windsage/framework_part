@@ -190,6 +190,7 @@ public class AccountManagerService
     }
 
     final Context mContext;
+    final PackageMonitor mPackageMonitor;
 
     private static final int[] INTERESTING_APP_OPS = new int[] {
         AppOpsManager.OP_GET_ACCOUNTS,
@@ -373,7 +374,7 @@ public class AccountManagerService
         }, UserHandle.ALL, userFilter, null, null);
 
         // Need to cancel account request notifications if the update/install can access the account
-        new PackageMonitor() {
+        mPackageMonitor = new PackageMonitor() {
             @Override
             public void onPackageAdded(String packageName, int uid) {
                 // Called on a handler, and running as the system
@@ -397,7 +398,8 @@ public class AccountManagerService
                     return;
                 }
             }
-        }.register(mContext, mHandler.getLooper(), UserHandle.ALL, true);
+        };
+        mPackageMonitor.register(mContext, mHandler.getLooper(), UserHandle.ALL, true);
 
         // Cancel account request notification if an app op was preventing the account access
         for (int i = 0; i < INTERESTING_APP_OPS.length; ++i) {
@@ -1567,6 +1569,9 @@ public class AccountManagerService
 
     @Override
     public String getPassword(Account account) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record(14);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         int callingUid = Binder.getCallingUid();
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "getPassword: " + account
@@ -1647,6 +1652,9 @@ public class AccountManagerService
 
     @Override
     public String getUserData(Account account, String key) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record(15);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         final int callingUid = Binder.getCallingUid();
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             String msg = String.format("getUserData( account: %s, key: %s, callerUid: %s, pid: %s",
@@ -2795,6 +2803,9 @@ public class AccountManagerService
 
     @Override
     public void setPassword(Account account, String password) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record(18);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         final int callingUid = Binder.getCallingUid();
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "setAuthToken: " + account
@@ -2871,6 +2882,9 @@ public class AccountManagerService
 
     @Override
     public void clearPassword(Account account) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record(19);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         final int callingUid = Binder.getCallingUid();
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "clearPassword: " + account
@@ -2897,6 +2911,9 @@ public class AccountManagerService
 
     @Override
     public void setUserData(Account account, String key, String value) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record(20);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         final int callingUid = Binder.getCallingUid();
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "setUserData: " + account
@@ -3420,6 +3437,9 @@ public class AccountManagerService
     public void addAccount(final IAccountManagerResponse response, final String accountType,
             final String authTokenType, final String[] requiredFeatures,
             final boolean expectActivityLaunch, final Bundle optionsIn) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record(16);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         Bundle.setDefusable(optionsIn, true);
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "addAccount: accountType " + accountType
@@ -4175,6 +4195,9 @@ public class AccountManagerService
     @Override
     public void editProperties(IAccountManagerResponse response, final String accountType,
             final boolean expectActivityLaunch) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record(21);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         final int callingUid = Binder.getCallingUid();
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.v(TAG, "editProperties: accountType " + accountType
@@ -5266,6 +5289,22 @@ public class AccountManagerService
                 } catch (RemoteException e) {
                     if (Log.isLoggable(TAG, Log.VERBOSE)) {
                         Log.v(TAG, "Session.onServiceDisconnected: "
+                                + "caught RemoteException while responding", e);
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void onNullBinding(ComponentName name) {
+            IAccountManagerResponse response = getResponseAndClose();
+            if (response != null) {
+                try {
+                    response.onError(AccountManager.ERROR_CODE_REMOTE_EXCEPTION,
+                            "disconnected");
+                } catch (RemoteException e) {
+                    if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                        Log.v(TAG, "Session.onNullBinding: "
                                 + "caught RemoteException while responding", e);
                     }
                 }

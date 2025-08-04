@@ -217,12 +217,17 @@ public:
                                                 const std::shared_ptr<ExternalTexture>& buffer,
                                                 base::unique_fd&& bufferFence);
 
-    virtual ftl::Future<FenceResult> drawGainmap(const std::shared_ptr<ExternalTexture>& sdr,
-                                                 base::borrowed_fd&& sdrFence,
-                                                 const std::shared_ptr<ExternalTexture>& hdr,
-                                                 base::borrowed_fd&& hdrFence, float hdrSdrRatio,
-                                                 ui::Dataspace dataspace,
-                                                 const std::shared_ptr<ExternalTexture>& gainmap);
+    // Tonemaps an HDR input image and draws an SDR rendition, plus a gainmap
+    // describing how to recover the HDR image.
+    //
+    // The HDR input image is ALWAYS encoded with an sRGB transfer function and
+    // is a floating point format. Accordingly, the hdrSdrRatio describes the
+    // max luminance in the HDR input image above SDR, and the dataspace
+    // describes the input primaries.
+    virtual ftl::Future<FenceResult> tonemapAndDrawGainmap(
+            const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
+            float hdrSdrRatio, ui::Dataspace dataspace, const std::shared_ptr<ExternalTexture>& sdr,
+            const std::shared_ptr<ExternalTexture>& gainmap);
 
     // Clean-up method that should be called on the main thread after the
     // drawFence returned by drawLayers fires. This method will free up
@@ -259,6 +264,14 @@ public:
 
     virtual void setEnableTracing(bool /*tracingEnabled*/) {}
 
+    //SPD:add for sf thread info by sifeng.tian 20231117 start
+    virtual pid_t getThreadId() { return gettid();};
+    //SPD:add for sf thread info by sifeng.tian 20231117 end
+
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
+    virtual void setViewportAndProjection(Rect viewPort, Rect sourceCrop) = 0;
+
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 protected:
     RenderEngine() : RenderEngine(Threaded::NO) {}
 
@@ -310,11 +323,10 @@ protected:
             const DisplaySettings& display, const std::vector<LayerSettings>& layers,
             const std::shared_ptr<ExternalTexture>& buffer, base::unique_fd&& bufferFence) = 0;
 
-    virtual void drawGainmapInternal(
+    virtual void tonemapAndDrawGainmapInternal(
             const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
-            const std::shared_ptr<ExternalTexture>& sdr, base::borrowed_fd&& sdrFence,
             const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
-            float hdrSdrRatio, ui::Dataspace dataspace,
+            float hdrSdrRatio, ui::Dataspace dataspace, const std::shared_ptr<ExternalTexture>& sdr,
             const std::shared_ptr<ExternalTexture>& gainmap) = 0;
 };
 

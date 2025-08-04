@@ -16,9 +16,12 @@
 
 package android.view.autofill;
 
+import static android.service.autofill.Flags.improveFillDialogAconfig;
+
 import android.annotation.SuppressLint;
 import android.annotation.TestApi;
 import android.provider.DeviceConfig;
+import android.service.autofill.Flags;
 import android.text.TextUtils;
 import android.util.ArraySet;
 import android.view.View;
@@ -99,6 +102,7 @@ public class AutofillFeatureFlags {
             "autofill_dialog_hints";
 
     // START CREDENTIAL MANAGER FLAGS //
+
     /**
      * Indicates whether credential manager tagged views should be ignored from autofill structures.
      * This flag is further gated by {@link #DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED}
@@ -113,6 +117,24 @@ public class AutofillFeatureFlags {
      */
     public static final String DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED =
             "autofill_credential_manager_enabled";
+
+    /**
+     * Indicates whether credential manager tagged views should suppress fill dialog.
+     * This flag is further gated by {@link #DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED}
+     *
+     * @hide
+     */
+    public static final String DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_SUPPRESS_FILL_DIALOG =
+            "autofill_credential_manager_suppress_fill_dialog";
+
+    /**
+     * Indicates whether credential manager tagged views should suppress save dialog.
+     * This flag is further gated by {@link #DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_ENABLED}
+     *
+     * @hide
+     */
+    public static final String DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_SUPPRESS_SAVE_DIALOG =
+            "autofill_credential_manager_suppress_save_dialog";
 
     /**
      * Indicates whether credential manager tagged views should suppress fill and save dialog.
@@ -346,6 +368,14 @@ public class AutofillFeatureFlags {
     // END AUTOFILL REMOVE PRE_TRIGGER FLAGS
 
     /**
+     * Whether per Session FillEventHistory is enabled.
+     *
+     * @hide
+     */
+    public static final String DEVICE_CONFIG_SESSION_FILL_EVENT_HISTORY =
+            "session_fill_event_history";
+
+    /**
      * Define the max input length for autofill to show suggesiton UI
      *
      * E.g. if flag is set to 3, autofill will only show suggestions when user inputs less than 3
@@ -373,6 +403,9 @@ public class AutofillFeatureFlags {
     // CREDENTIAL MANAGER DEFAULTS
     // Credential manager is enabled by default so as to allow testing by app developers
     private static final boolean DEFAULT_CREDENTIAL_MANAGER_ENABLED = true;
+    private static final boolean DEFAULT_CREDENTIAL_MANAGER_IGNORE_VIEWS = true;
+    private static final boolean DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_FILL_DIALOG = false;
+    private static final boolean DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_SAVE_DIALOG = false;
     private static final boolean DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_FILL_AND_SAVE_DIALOG = true;
     // END CREDENTIAL MANAGER DEFAULTS
 
@@ -401,10 +434,17 @@ public class AutofillFeatureFlags {
     public static final boolean DEFAULT_IMPROVE_FILL_DIALOG_ENABLED = true;
     // Default for whether the pre trigger removal is enabled.
     /** @hide */
-    public static final long DEFAULT_FILL_DIALOG_TIMEOUT_MS = 300; // 300 ms
+    public static final long DEFAULT_FILL_DIALOG_TIMEOUT_MS = 400; // 400 ms
     /** @hide */
     public static final long DEFAULT_FILL_DIALOG_MIN_WAIT_AFTER_IME_ANIMATION_END_MS = 0; // 0 ms
     // END AUTOFILL REMOVE PRE_TRIGGER FLAGS DEFAULTS
+
+    /**
+     * Default for whether per Session FillEventHistory is enabled
+     *
+     * @hide
+     */
+    public static final boolean DEFAULT_SESSION_FILL_EVENT_HISTORY_ENABLED = true;
 
     /**
      * @hide
@@ -442,7 +482,6 @@ public class AutofillFeatureFlags {
                 (str) -> !TextUtils.isEmpty(str));
     }
 
-    /* starts credman flag getter function */
     /**
      * Whether the Credential Manager feature is enabled or not
      *
@@ -455,6 +494,7 @@ public class AutofillFeatureFlags {
                 DEFAULT_CREDENTIAL_MANAGER_ENABLED);
     }
 
+
     /**
      * Whether credential manager tagged views should not trigger fill dialog requests.
      *
@@ -466,7 +506,6 @@ public class AutofillFeatureFlags {
                     DEVICE_CONFIG_AUTOFILL_CREDENTIAL_MANAGER_SUPPRESS_FILL_AND_SAVE_DIALOG,
                     DEFAULT_CREDENTIAL_MANAGER_SUPPRESS_FILL_AND_SAVE_DIALOG);
     }
-    /* ends credman flag getter function */
 
     /**
      * Whether triggering fill request on unimportant view is enabled.
@@ -662,7 +701,7 @@ public class AutofillFeatureFlags {
     public static boolean isImproveFillDialogEnabled() {
         // TODO(b/266379948): Add condition for checking whether device has PCC first
 
-        return DeviceConfig.getBoolean(
+        return improveFillDialogAconfig() && DeviceConfig.getBoolean(
                 DeviceConfig.NAMESPACE_AUTOFILL,
                 DEVICE_CONFIG_IMPROVE_FILL_DIALOG_ENABLED,
                 DEFAULT_IMPROVE_FILL_DIALOG_ENABLED);
@@ -694,5 +733,21 @@ public class AutofillFeatureFlags {
                 DeviceConfig.NAMESPACE_AUTOFILL,
                 DEVICE_CONFIG_FILL_DIALOG_MIN_WAIT_AFTER_IME_ANIMATION_END_MS,
                 DEFAULT_FILL_DIALOG_MIN_WAIT_AFTER_IME_ANIMATION_END_MS);
+    }
+
+    /**
+     * Whether tracking FillEventHistory per Session is enabled
+     *
+     * @hide
+     */
+    public static boolean isMultipleFillEventHistoryEnabled() {
+        if (!Flags.multipleFillHistory()) {
+            return false;
+        }
+
+        return DeviceConfig.getBoolean(
+                DeviceConfig.NAMESPACE_AUTOFILL,
+                DEVICE_CONFIG_SESSION_FILL_EVENT_HISTORY,
+                DEFAULT_SESSION_FILL_EVENT_HISTORY_ENABLED);
     }
 }

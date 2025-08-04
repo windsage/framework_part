@@ -13,7 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+ /*
+ * Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
+ * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
 package com.android.server.pm;
 
 import static android.content.pm.Flags.disallowSdkLibsToBeApps;
@@ -125,7 +129,6 @@ import android.content.pm.SharedLibraryInfo;
 import android.content.pm.Signature;
 import android.content.pm.SigningDetails;
 import android.content.pm.VerifierInfo;
-import android.content.pm.dex.DexMetadataHelper;
 import android.content.pm.parsing.result.ParseResult;
 import android.content.pm.parsing.result.ParseTypeImpl;
 import android.net.Uri;
@@ -137,6 +140,9 @@ import android.os.Message;
 import android.os.PowerManager;
 import android.os.Process;
 import android.os.RemoteException;
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+import android.os.SystemProperties;
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
 import android.os.SELinux;
 import android.os.SystemClock;
 import android.os.Trace;
@@ -157,6 +163,7 @@ import android.util.Pair;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
+import android.util.BoostFramework;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.content.F2fsUtils;
@@ -171,7 +178,6 @@ import com.android.internal.pm.pkg.component.ParsedIntentInfo;
 import com.android.internal.pm.pkg.component.ParsedPermission;
 import com.android.internal.pm.pkg.component.ParsedPermissionGroup;
 import com.android.internal.pm.pkg.parsing.ParsingPackageUtils;
-import com.android.internal.security.VerityUtils;
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.CollectionUtils;
 import com.android.server.EventLogTags;
@@ -186,7 +192,9 @@ import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.pm.pkg.PackageStateInternal;
 import com.android.server.pm.pkg.SharedLibraryWrapper;
 import com.android.server.rollback.RollbackManagerInternal;
-import com.android.server.security.FileIntegrityService;
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+import com.android.server.utils.TimingsTraceAndSlog;
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
 import com.android.server.utils.WatchedArrayMap;
 import com.android.server.utils.WatchedLongSparseArray;
 
@@ -194,8 +202,11 @@ import dalvik.system.VMRuntime;
 
 import java.io.File;
 import java.io.FileInputStream;
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
 import java.io.IOException;
-import java.security.DigestException;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -204,12 +215,21 @@ import java.security.cert.CertificateException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+import java.util.HashMap;
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import org.xmlpull.v1.XmlPullParserFactory;
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
 
 final class InstallPackageHelper {
     // One minute over PM WATCHDOG_TIMEOUT
@@ -229,6 +249,20 @@ final class InstallPackageHelper {
     private final SharedLibrariesImpl mSharedLibraries;
     private final PackageManagerServiceInjector mInjector;
     private final UpdateOwnershipHelper mUpdateOwnershipHelper;
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+    private static final String PROPERTY_NO_RIL = "ro.radio.noril";
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+// QTI_BEGIN: 2025-02-12: Core: Add provision to disable applications for QSPA enabled targets
+
+    private static final String PROPERTY_QSPA_Enabled = "ro.boot.vendor.qspa";
+// QTI_END: 2025-02-12: Core: Add provision to disable applications for QSPA enabled targets
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+    /**
+     * Tracks packages that need to be disabled.
+     * Map of package name to its path on the file system.
+     */
+    final private HashMap<String, String> mPackagesToBeDisabled = new HashMap<>();
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
 
     private final Object mInternalLock = new Object();
     @GuardedBy("mInternalLock")
@@ -853,44 +887,52 @@ final class InstallPackageHelper {
         int token;
         if (mPm.mNextInstallToken < 0) mPm.mNextInstallToken = 1;
         token = mPm.mNextInstallToken++;
-        mPm.mRunningInstalls.put(token, request);
+        synchronized (mPm.mRunningInstalls) {
+            mPm.mRunningInstalls.put(token, request);
+        }
 
         if (DEBUG_INSTALL) Log.v(TAG, "+ starting restore round-trip " + token);
 
         final boolean succeeded = request.getReturnCode() == PackageManager.INSTALL_SUCCEEDED;
-        if (succeeded && doRestore) {
-            // Pass responsibility to the Backup Manager.  It will perform a
-            // restore if appropriate, then pass responsibility back to the
-            // Package Manager to run the post-install observer callbacks
-            // and broadcasts.
-            request.closeFreezer();
-            doRestore = performBackupManagerRestore(userId, token, request);
-        }
+        if (succeeded) {
+            request.onRestoreStarted();
+            if (doRestore) {
+                // Pass responsibility to the Backup Manager.  It will perform a
+                // restore if appropriate, then pass responsibility back to the
+                // Package Manager to run the post-install observer callbacks
+                // and broadcasts.
+                // Note: MUST close freezer before backup/restore, otherwise test
+                // of CtsBackupHostTestCases will fail.
+                request.closeFreezer();
+                doRestore = performBackupManagerRestore(userId, token, request);
+            }
 
-        // If this is an update to a package that might be potentially downgraded, then we
-        // need to check with the rollback manager whether there's any userdata that might
-        // need to be snapshotted or restored for the package.
-        //
-        // TODO(narayan): Get this working for cases where userId == UserHandle.USER_ALL.
-        if (succeeded && !doRestore && update) {
-            doRestore = performRollbackManagerRestore(userId, token, request);
-        }
+            // If this is an update to a package that might be potentially downgraded, then we
+            // need to check with the rollback manager whether there's any userdata that might
+            // need to be snapshotted or restored for the package.
+            //
+            // TODO(narayan): Get this working for cases where userId == UserHandle.USER_ALL.
+            if (!doRestore && update) {
+                doRestore = performRollbackManagerRestore(userId, token, request);
+            }
 
-        if (succeeded && doRestore && !request.hasPostInstallRunnable()) {
-            boolean hasNeverBeenRestored =
-                    packageSetting != null && packageSetting.isPendingRestore();
-            request.setPostInstallRunnable(() -> {
-                // Permissions should be restored on each user that has the app installed for the
-                // first time, unless it's an unarchive install for an archived app, in which case
-                // the permissions should be restored on each user that has the app updated.
-                int[] userIdsToRestorePermissions = hasNeverBeenRestored
-                        ? request.getUpdateBroadcastUserIds()
-                        : request.getFirstTimeBroadcastUserIds();
-                for (int restorePermissionUserId : userIdsToRestorePermissions) {
-                    mPm.restorePermissionsAndUpdateRolesForNewUserInstall(request.getName(),
-                            restorePermissionUserId);
-                }
-            });
+            if (doRestore && !request.hasPostInstallRunnable()) {
+                boolean hasNeverBeenRestored =
+                        packageSetting != null && packageSetting.isPendingRestore();
+                request.setPostInstallRunnable(() -> {
+                    // Permissions should be restored on each user that has the app installed for
+                    // the first time, unless it's an unarchive install for an archived app, in
+                    // which case the permissions should be restored on each user that has the
+                    // app updated.
+                    int[] userIdsToRestorePermissions = hasNeverBeenRestored
+                            ? request.getUpdateBroadcastUserIds()
+                            : request.getFirstTimeBroadcastUserIds();
+                    for (int restorePermissionUserId : userIdsToRestorePermissions) {
+                        mPm.restorePermissionsAndUpdateRolesForNewUserInstall(request.getName(),
+                                restorePermissionUserId);
+                    }
+                });
+            }
         }
 
         if (doRestore) {
@@ -900,8 +942,11 @@ final class InstallPackageHelper {
                 }
             }
         } else {
-            // No restore possible, or the Backup Manager was mysteriously not
-            // available -- just fire the post-install work request directly.
+            // No restore possible, or the Backup Manager was mysteriously not available.
+            // we don't need to wait for restore to complete before closing the freezer,
+            // so we can close the freezer right away.
+            // Also just fire the post-install work request directly.
+            request.closeFreezer();
             if (DEBUG_INSTALL) Log.v(TAG, "No restore - queue post-install for " + token);
 
             Trace.asyncTraceBegin(TRACE_TAG_PACKAGE_MANAGER, "postInstall", token);
@@ -1014,8 +1059,9 @@ final class InstallPackageHelper {
      *
      * Failure at any phase will result in a full failure to install all packages.
      */
-    void installPackagesTraced(List<InstallRequest> requests) {
+    void installPackagesTraced(List<InstallRequest> requests, MoveInfo moveInfo) {
         Trace.traceBegin(TRACE_TAG_PACKAGE_MANAGER, "installPackages");
+        boolean pendingForDexopt = false;
         boolean success = false;
         final Map<String, Boolean> createdAppId = new ArrayMap<>(requests.size());
         final Map<String, Settings.VersionInfo> versionInfos = new ArrayMap<>(requests.size());
@@ -1029,20 +1075,74 @@ final class InstallPackageHelper {
                 if (reconciledPackages == null) {
                     return;
                 }
+
                 if (renameAndUpdatePaths(requests)) {
                     // rename before dexopt because art will encoded the path in the odex/vdex file
                     if (Flags.improveInstallFreeze()) {
-                        prepPerformDexoptIfNeeded(reconciledPackages);
-                    }
-                    if (commitInstallPackages(reconciledPackages)) {
-                        success = true;
+                        pendingForDexopt = true;
+                        final Runnable actionsAfterDexopt = () ->
+                                doPostDexopt(reconciledPackages, requests,
+                                        createdAppId, moveInfo, acquireTime);
+                        prepPerformDexoptIfNeeded(reconciledPackages, actionsAfterDexopt);
+                    } else {
+                        if (commitInstallPackages(reconciledPackages)) {
+                            success = true;
+                        }
                     }
                 }
             }
         } finally {
+            if (!pendingForDexopt) {
+                completeInstallProcess(requests, createdAppId, success);
+                Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
+                doPostInstall(requests, moveInfo);
+                releaseWakeLock(acquireTime, requests.size());
+            }
+        }
+    }
+
+    void doPostDexopt(List<ReconciledPackage> reconciledPackages,
+            List<InstallRequest> requests, Map<String, Boolean> createdAppId,
+            MoveInfo moveInfo, long acquireTime) {
+        for (InstallRequest request : requests) {
+            request.onWaitDexoptFinished();
+        }
+        boolean success = false;
+        try {
+            if (commitInstallPackages(reconciledPackages)) {
+                success = true;
+            }
+        } finally {
             completeInstallProcess(requests, createdAppId, success);
             Trace.traceEnd(TRACE_TAG_PACKAGE_MANAGER);
+            doPostInstall(requests, moveInfo);
             releaseWakeLock(acquireTime, requests.size());
+        }
+    }
+
+    private void doPostInstall(List<InstallRequest> requests, MoveInfo moveInfo) {
+        for (InstallRequest request : requests) {
+            doPostInstallCleanUp(request, moveInfo);
+        }
+
+        for (InstallRequest request : requests) {
+            restoreAndPostInstall(request);
+        }
+    }
+
+    private void doPostInstallCleanUp(InstallRequest request, MoveInfo moveInfo) {
+        if (moveInfo != null) {
+            if (request.getReturnCode() == PackageManager.INSTALL_SUCCEEDED) {
+                mRemovePackageHelper.cleanUpForMoveInstall(moveInfo.mFromUuid,
+                        moveInfo.mPackageName, moveInfo.mFromCodePath);
+            } else {
+                mRemovePackageHelper.cleanUpForMoveInstall(moveInfo.mToUuid,
+                        moveInfo.mPackageName, moveInfo.mFromCodePath);
+            }
+        } else {
+            if (request.getReturnCode() != PackageManager.INSTALL_SUCCEEDED) {
+                mRemovePackageHelper.removeCodePath(request.getCodeFile());
+            }
         }
     }
 
@@ -1089,7 +1189,7 @@ final class InstallPackageHelper {
             throws PackageManagerException {
         final int userId = installRequest.getUserId();
         if (userId != UserHandle.USER_ALL && userId != UserHandle.USER_CURRENT
-                && !mPm.mUserManager.exists(userId)) {
+                && !ArrayUtils.contains(allUsers, userId)) {
             throw new PackageManagerException(PackageManagerException.INTERNAL_ERROR_MISSING_USER,
                     "User " + userId + " doesn't exist or has been removed");
         }
@@ -1121,7 +1221,9 @@ final class InstallPackageHelper {
         }
     }
 
-    private void prepPerformDexoptIfNeeded(List<ReconciledPackage> reconciledPackages) {
+    private void prepPerformDexoptIfNeeded(List<ReconciledPackage> reconciledPackages,
+            Runnable actionsAfterDexopt) {
+        List<CompletableFuture<Void>> completableFutures = new ArrayList<>();
         for (ReconciledPackage reconciledPkg : reconciledPackages) {
             final InstallRequest request = reconciledPkg.mInstallRequest;
             // prepare profiles
@@ -1137,6 +1239,7 @@ final class InstallPackageHelper {
                 mSharedLibraries.executeSharedLibrariesUpdate(request.getParsedPackage(), ps,
                         null, null, reconciledPkg.mCollectedSharedLibraryInfos, allUsers);
             }
+
             try (PackageManagerTracedLock installLock = mPm.mInstallLock.acquireLock()) {
                 final int[] newUsers = getNewUsers(request, allUsers);
                 // Hardcode previousAppId to 0 to disable any data migration (http://b/221088088)
@@ -1148,11 +1251,23 @@ final class InstallPackageHelper {
                 }
             } catch (PackageManagerException e) {
                 request.setError(e.error, e.getMessage());
-                return;
+                break;
             }
             request.setKeepArtProfile(true);
-            // TODO(b/388159696): Use performDexoptIfNeededAsync.
-            DexOptHelper.performDexoptIfNeeded(request, mDexManager, null /* installLock */);
+
+            CompletableFuture<Void> future =
+                    DexOptHelper.performDexoptIfNeededAsync(request, mDexManager);
+            completableFutures.add(future);
+            request.onWaitDexoptStarted();
+        }
+
+        if (!completableFutures.isEmpty()) {
+            CompletableFuture<Void> allFutures =
+                    CompletableFuture.allOf(
+                            completableFutures.toArray(CompletableFuture[]::new));
+            var unused = allFutures.thenRun(() -> mPm.mHandler.post(actionsAfterDexopt));
+        } else {
+            actionsAfterDexopt.run();
         }
     }
 
@@ -1166,11 +1281,8 @@ final class InstallPackageHelper {
                 }
                 try {
                     doRenameLI(request, parsedPackage);
-                    setUpFsVerity(parsedPackage);
-                } catch (Installer.InstallerException | IOException | DigestException
-                         | NoSuchAlgorithmException | PrepareFailure e) {
-                    request.setError(PackageManagerException.INTERNAL_ERROR_VERITY_SETUP,
-                            "Failed to set up verity: " + e);
+                } catch (PrepareFailure e) {
+                    request.setError(e);
                     return false;
                 }
 
@@ -1327,6 +1439,8 @@ final class InstallPackageHelper {
             Map<String, Boolean> createdAppId, boolean success) {
         if (success) {
             for (InstallRequest request : requests) {
+                mInjector.getAppOpsManagerInternal().onPackageAdded(
+                        request.getName(), request.getAppId());
                 if (request.getDataLoaderType() != DataLoaderType.INCREMENTAL) {
                     continue;
                 }
@@ -1557,6 +1671,16 @@ final class InstallPackageHelper {
                     // on the device; we should replace it.
                     replace = true;
                     if (DEBUG_INSTALL) Slog.d(TAG, "Replace existing package: " + pkgName);
+                    if (pkgName != null) {
+                        BoostFramework mPerf = new BoostFramework();
+                        if (mPerf != null) {
+                            if (mPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                                mPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                                mPerf.perfUXEngine_events(BoostFramework.UXE_EVENT_PKG_INSTALL, 0, pkgName, 1);
+                            }
+                            mPerf.perfEvent(BoostFramework.VENDOR_HINT_APP_UPDATE, pkgName, 2, 0, -1);
+                        }
+                    }
                 }
                 if (replace) {
                     // Prevent apps opting out from runtime permissions
@@ -2323,68 +2447,6 @@ final class InstallPackageHelper {
         }
     }
 
-    /**
-     * Set up fs-verity for the given package. For older devices that do not support fs-verity,
-     * this is a no-op.
-     */
-    private void setUpFsVerity(AndroidPackage pkg) throws Installer.InstallerException,
-            PrepareFailure, IOException, DigestException, NoSuchAlgorithmException {
-        if (!PackageManagerServiceUtils.isApkVerityEnabled()) {
-            return;
-        }
-
-        if (isIncrementalPath(pkg.getPath()) && IncrementalManager.getVersion()
-                < IncrementalManager.MIN_VERSION_TO_SUPPORT_FSVERITY) {
-            return;
-        }
-
-        // Collect files we care for fs-verity setup.
-        ArrayMap<String, String> fsverityCandidates = new ArrayMap<>();
-        fsverityCandidates.put(pkg.getBaseApkPath(),
-                VerityUtils.getFsveritySignatureFilePath(pkg.getBaseApkPath()));
-
-        final String dmPath = DexMetadataHelper.buildDexMetadataPathForApk(
-                pkg.getBaseApkPath());
-        if (new File(dmPath).exists()) {
-            fsverityCandidates.put(dmPath, VerityUtils.getFsveritySignatureFilePath(dmPath));
-        }
-
-        for (String path : pkg.getSplitCodePaths()) {
-            fsverityCandidates.put(path, VerityUtils.getFsveritySignatureFilePath(path));
-
-            final String splitDmPath = DexMetadataHelper.buildDexMetadataPathForApk(path);
-            if (new File(splitDmPath).exists()) {
-                fsverityCandidates.put(splitDmPath,
-                        VerityUtils.getFsveritySignatureFilePath(splitDmPath));
-            }
-        }
-
-        var fis = FileIntegrityService.getService();
-        for (Map.Entry<String, String> entry : fsverityCandidates.entrySet()) {
-            try {
-                final String filePath = entry.getKey();
-                if (VerityUtils.hasFsverity(filePath)) {
-                    continue;
-                }
-
-                final String signaturePath = entry.getValue();
-                if (new File(signaturePath).exists()) {
-                    // If signature is provided, enable fs-verity first so that the file can be
-                    // measured for signature check below.
-                    VerityUtils.setUpFsverity(filePath);
-
-                    if (!fis.verifyPkcs7DetachedSignature(signaturePath, filePath)) {
-                        throw new PrepareFailure(PackageManager.INSTALL_FAILED_BAD_SIGNATURE,
-                                "fs-verity signature does not verify against a known key");
-                    }
-                }
-            } catch (IOException e) {
-                throw new PrepareFailure(PackageManager.INSTALL_FAILED_BAD_SIGNATURE,
-                        "Failed to enable fs-verity: " + e);
-            }
-        }
-    }
-
     private PackageFreezer freezePackageForInstall(String packageName, int userId, int installFlags,
             String killReason, int exitInfoReason, InstallRequest request) {
         if ((installFlags & PackageManager.INSTALL_DONT_KILL_APP) != 0) {
@@ -2532,6 +2594,17 @@ final class InstallPackageHelper {
                     "User " + userId + " doesn't exist or has been removed",
                     PackageManagerException.INTERNAL_ERROR_MISSING_USER));
             return;
+        }
+        if (pkgName != null) {
+            BoostFramework mPerf = new BoostFramework();
+            if (mPerf != null) {
+                if (mPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                    mPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                    mPerf.perfUXEngine_events(BoostFramework.UXE_EVENT_PKG_INSTALL, 0, pkgName, 0);
+                } else {
+                    mPerf.perfEvent(BoostFramework.VENDOR_HINT_PKG_INSTALL, pkgName, 2, 0, 0);
+                }
+            }
         }
         synchronized (mPm.mLock) {
             // For system-bundled packages, we assume that installing an upgraded version
@@ -2790,6 +2863,7 @@ final class InstallPackageHelper {
                                     | Installer.FLAG_CLEAR_CODE_CACHE_ONLY);
                 }
 
+                // run synchronous dexopt if the freeze improvement is not supported
                 DexOptHelper.performDexoptIfNeeded(
                         installRequest, mDexManager, mPm.mInstallLock.getRawLock());
             }
@@ -2985,7 +3059,7 @@ final class InstallPackageHelper {
         }
     }
 
-    public void sendPendingBroadcasts(String reasonForTrace) {
+    public void sendPendingBroadcasts(String reasonForTrace, int callingUidForTrace) {
         String[] packages;
         ArrayList<String>[] components;
         int numBroadcasts = 0, numUsers;
@@ -3030,7 +3104,7 @@ final class InstallPackageHelper {
         for (int i = 0; i < numBroadcasts; i++) {
             mBroadcastHelper.sendPackageChangedBroadcast(snapshot, packages[i],
                     true /* dontKillApp */, components[i], uids[i], null /* reason */,
-                    reasonForTrace);
+                    reasonForTrace, callingUidForTrace);
         }
     }
 
@@ -3061,6 +3135,9 @@ final class InstallPackageHelper {
         }
 
         if (succeeded) {
+            Slog.i(TAG, "installation completed for package:" + packageName
+                    + ". Final code path: " + pkgSetting.getPath().getPath());
+
             if (Flags.aslInApkAppMetadataSource()
                     && pkgSetting.getAppMetadataSource() == APP_METADATA_SOURCE_APK) {
                 if (!extractAppMetadataFromApk(request.getPkg(),
@@ -3100,19 +3177,11 @@ final class InstallPackageHelper {
 
             // Set the OP_ACCESS_RESTRICTED_SETTINGS op, which is used by ECM (see {@link
             // EnhancedConfirmationManager}) as a persistent state denoting whether an app is
-            // currently guarded by ECM, not guarded by ECM, or (in Android V+) that this should
-            // be decided later.
-            if (android.permission.flags.Flags.enhancedConfirmationModeApisEnabled()
-                    && android.security.Flags.extendEcmToAllSettings()) {
-                final int appId = request.getAppId();
-                mPm.mHandler.post(() -> {
-                    for (int userId : firstUserIds) {
-                        // MODE_DEFAULT means that the app's guardedness will be decided lazily
-                        setAccessRestrictedSettingsMode(packageName, appId, userId,
-                                AppOpsManager.MODE_DEFAULT);
-                    }
-                });
-            } else {
+            // currently guarded by ECM, not guarded by ECM or (in Android V+) that this should
+            // be decided later. In Android B, the op's default mode was updated to the
+            // "should be decided later" case, and so this step is now unnecessary.
+            if (!android.permission.flags.Flags.enhancedConfirmationModeApisEnabled()
+                    || !android.security.Flags.extendEcmToAllSettings()) {
                 // Apply restricted settings on potentially dangerous packages. Needs to happen
                 // after appOpsManager is notified of the new package
                 if (request.getPackageSource() == PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE
@@ -3833,6 +3902,17 @@ final class InstallPackageHelper {
                 Log.w(TAG, "Dropping cache of " + file.getAbsolutePath());
                 cacher.cleanCachedResult(file);
             }
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+
+            if (mPackagesToBeDisabled.values() != null &&
+                    (mPackagesToBeDisabled.values().contains(file.toString()) ||
+                    mPackagesToBeDisabled.values().stream().anyMatch(file.toString()::contains))) {
+                // Ignore entries contained in {@link #mPackagesToBeDisabled}
+                Slog.d(TAG, "ignoring package: " + file);
+                continue;
+            }
+
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
             parallelPackageParser.submit(file, parseFlags);
             fileCount++;
         }
@@ -3880,6 +3960,208 @@ final class InstallPackageHelper {
         }
     }
 
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+    /**
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+// QTI_BEGIN: 2025-02-12: Core: Add provision to disable applications for QSPA enabled targets
+     * Read the list of telephony packages that need to be disabled.
+// QTI_END: 2025-02-12: Core: Add provision to disable applications for QSPA enabled targets
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+     *
+     * For wifi-only devices (modem-less), telephony related applications do not need to run.
+     * This method will read the list of packages from a predefined file in the file system,
+     * and store it in {@link #mPackagesToBeDisabled}. These applications will be skipped when
+     * directories are scanned later.
+     */
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+// QTI_BEGIN: 2025-02-12: Core: Add provision to disable applications for QSPA enabled targets
+    protected void readListOfTelephonyPackagesToBeDisabled() {
+// QTI_END: 2025-02-12: Core: Add provision to disable applications for QSPA enabled targets
+// QTI_BEGIN: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+        boolean wifiOnly = SystemProperties.getBoolean(PROPERTY_NO_RIL, false);
+        if (!wifiOnly) {
+            // Apps need to be disabled only for modem-less devices
+            return;
+        }
+
+        final String TELEPHONY_PACKAGES_PATH = "etc/telephony_packages.xml";
+        File telephonyPackagesFile =
+                new File(Environment.getVendorDirectory(), TELEPHONY_PACKAGES_PATH);
+        FileReader packagesReader = null;
+        Slog.d(TAG, "Disabling packages for wifi-only device, source: " + telephonyPackagesFile);
+
+        try {
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            factory.setNamespaceAware(true);
+            XmlPullParser packagesParser = factory.newPullParser();
+            packagesReader = new FileReader(telephonyPackagesFile);
+
+            if (packagesParser != null) {
+                packagesParser.setInput(packagesReader);
+                int eventType = packagesParser.getEventType();
+                while (eventType != XmlPullParser.END_DOCUMENT) {
+                    String tagName = packagesParser.getName();
+                    switch (eventType) {
+                        case XmlPullParser.START_TAG:
+                            if (TextUtils.equals(tagName, "packageinfo")) {
+                                String name = packagesParser.getAttributeValue(null, "name");
+                                String path = packagesParser.getAttributeValue(null, "path");
+                                mPackagesToBeDisabled.put(name, path);
+                            }
+                            break;
+                    }
+                    eventType = packagesParser.next();
+                }
+            }
+        } catch (XmlPullParserException e) {
+            Log.e(TAG, "XmlPullParserException parsing '"+ telephonyPackagesFile + "'", e);
+        } catch (IOException e) {
+            Log.e(TAG, "IOException parsing '" + telephonyPackagesFile + "'", e);
+        } catch (Exception e) {
+            Log.e(TAG, "Exception parsing '" + telephonyPackagesFile + "'", e);
+        }
+
+        if (packagesReader != null) {
+            try {
+                packagesReader.close();
+            } catch (IOException e) {
+                // do nothing
+            }
+        }
+
+        if (DEBUG_PACKAGE_SCANNING) {
+            for (String packageName : mPackagesToBeDisabled.keySet()) {
+                Slog.d(TAG, "readListOfPackagesToBeDisabled"
+                        + ", package: " + packageName
+                        + ", path: " + mPackagesToBeDisabled.get(packageName));
+            }
+        }
+    }
+
+// QTI_END: 2024-11-13: Telephony: Add provision to prevent installation of some apps
+// QTI_BEGIN: 2025-02-12: Core: Add provision to disable applications for QSPA enabled targets
+
+    /**
+     * Read the list of packages that need to be disabled.
+     *
+     * For Qspa enabled targets, some defined applications do not need to run if the specific
+     * hardware subsystem is not enabled(disabled) on the target.
+     * This method will read the list of packages from a predefined file in the file system,
+     * and store it in {@link #mPackagesToBeDisabled} if the property value on device matches the
+     * systemPropertyValue i.e., disabled. These applications will be skipped when
+     * directories are scanned later.
+     */
+    protected void readListOfPackagesToBeDisabled() {
+        boolean qspaEnabled = SystemProperties.getBoolean(PROPERTY_QSPA_Enabled, false);
+        if (!qspaEnabled) {
+            // Apps need to be disabled only for Qspa Enabled targets
+            return;
+        }
+
+        final String QSPA_PACKAGES_PATH = "etc/qspa_application_packages.xml";
+        File qspaPackagesFile =
+                new File(Environment.getVendorDirectory(), QSPA_PACKAGES_PATH);
+
+
+        if (!qspaPackagesFile.exists()) {
+            Slog.e(TAG, "File not found: " + qspaPackagesFile);
+            return; // Return early if the file does not exist
+        }
+        FileReader packagesReader = null;
+        Slog.d(TAG, "Disabling packages for qspa enabled targets, source: " + qspaPackagesFile);
+
+        try {
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            factory.setNamespaceAware(true);
+            XmlPullParser packagesParser = factory.newPullParser();
+            packagesReader = new FileReader(qspaPackagesFile);
+
+            if (packagesParser != null) {
+                packagesParser.setInput(packagesReader);
+                int eventType = packagesParser.getEventType();
+                while (eventType != XmlPullParser.END_DOCUMENT) {
+                    String tagName = packagesParser.getName();
+                    switch (eventType) {
+                        case XmlPullParser.START_TAG:
+                            if (TextUtils.equals(tagName, "propertyCheck")) {
+                                String subsystem =
+                                        packagesParser.getAttributeValue(null, "subsystem");
+                                String systemPropertyName = "ro.boot.vendor.qspa." + subsystem;
+                                String currValue = SystemProperties.get(systemPropertyName);
+                                Slog.d(TAG, "subsystem: " + subsystem + " currValue: " + currValue);
+                                int innerEventType = packagesParser.next();
+                                while (innerEventType != XmlPullParser.END_TAG ||
+                                        !TextUtils.equals(packagesParser.getName(),
+                                        "propertyCheck")) {
+                                    if (innerEventType == XmlPullParser.START_TAG &&
+                                            TextUtils.equals(packagesParser.getName(),
+                                            "propertyValue")) {
+                                        String systemPropertyValue =
+                                                packagesParser.getAttributeValue(null, "value");
+                                        if (TextUtils.equals(currValue, systemPropertyValue)) {
+                                            int packageEventType = packagesParser.next();
+                                            while (packageEventType != XmlPullParser.END_TAG ||
+                                                    !TextUtils.equals(packagesParser.getName(),
+                                                    "propertyValue")) {
+                                                if (packageEventType == XmlPullParser.START_TAG &&
+                                                        TextUtils.equals(packagesParser.getName(),
+                                                        "packageinfo")) {
+                                                    String name = packagesParser.getAttributeValue(
+                                                            null, "name");
+                                                    String path = packagesParser.getAttributeValue(
+                                                            null, "path");
+                                                    mPackagesToBeDisabled.put(name, path);
+                                                }
+                                                packageEventType = packagesParser.next();
+                                            }
+                                        }
+                                        else
+                                        {
+                                            Slog.w(TAG, "Ignoring disabling packages due to " +
+                                                "systemPropertyName: " + systemPropertyName +
+                                                " with value: " + systemPropertyValue);
+                                        }
+                                    }
+                                    innerEventType = packagesParser.next();
+                                }
+                            }
+                            break;
+                    }
+                    eventType = packagesParser.next();
+                }
+            }
+        } catch (XmlPullParserException e) {
+            Slog.e(TAG, "XmlPullParserException parsing '"+ qspaPackagesFile + "'", e);
+        } catch (IOException e) {
+            Slog.e(TAG, "IOException parsing '" + qspaPackagesFile + "'", e);
+        } catch (Exception e) {
+            Slog.e(TAG, "Exception parsing '" + qspaPackagesFile + "'", e);
+        }
+
+        if (packagesReader != null) {
+            try {
+                packagesReader.close();
+            } catch (IOException e) {
+                // do nothing
+            }
+        }
+
+        for (String packageName : mPackagesToBeDisabled.keySet()) {
+                Slog.d(TAG, "readListOfPackagesToBeDisabled"
+                        + ", package: " + packageName
+                        + ", path: " + mPackagesToBeDisabled.get(packageName));
+            }
+
+        if (DEBUG_PACKAGE_SCANNING) {
+            for (String packageName : mPackagesToBeDisabled.keySet()) {
+                Slog.d(TAG, "readListOfPackagesToBeDisabled"
+                        + ", package: " + packageName
+                        + ", path: " + mPackagesToBeDisabled.get(packageName));
+            }
+        }
+    }
+
+// QTI_END: 2025-02-12: Core: Add provision to disable applications for QSPA enabled targets
     /**
      * Make sure all system apps that we expected to appear on
      * the userdata partition actually showed up. If they never
@@ -4508,9 +4790,6 @@ final class InstallPackageHelper {
      * at boot.
      */
     private boolean needSignatureMatchToSystem(String packageName) {
-        if (!android.security.Flags.extendVbChainToUpdatedApk()) {
-            return false;
-        }
         return mPm.mInjector.getSystemConfig().getPreinstallPackagesWithStrictSignatureCheck()
             .contains(packageName);
     }

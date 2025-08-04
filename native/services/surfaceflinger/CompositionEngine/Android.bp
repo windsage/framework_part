@@ -13,11 +13,10 @@ cc_defaults {
     defaults: [
         "aconfig_lib_cc_static_link.defaults",
         "android.hardware.graphics.composer3-ndk_shared",
-        "android.hardware.power-ndk_shared",
         "librenderengine_deps",
         "libtimestats_deps",
         "surfaceflinger_defaults",
-        "libsurfaceflinger_proto_deps",
+        "poweradvisor_deps",
     ],
     cflags: [
         "-DLOG_TAG=\"CompositionEngine\"",
@@ -42,6 +41,7 @@ cc_defaults {
         "libutils",
     ],
     static_libs: [
+        "liblayers_proto",
         "libguiflags",
         "libmath",
         "librenderengine",
@@ -51,6 +51,7 @@ cc_defaults {
         "libprocessgroup",
         "libprocessgroup_util",
         "libjsoncpp",
+        "libsurfaceflinger_common",
     ],
     header_libs: [
         "android.hardware.graphics.composer@2.1-command-buffer",
@@ -93,6 +94,10 @@ cc_library {
     defaults: [
         "libcompositionengine_defaults",
         "libsurfaceflinger_common_deps",
+        "libqtisurfaceflingerextension_defaults",
+    ],
+    static_libs: [
+        "libqticompositionengineextension",
     ],
     srcs: [
         ":libcompositionengine_sources",
@@ -122,6 +127,12 @@ cc_library {
         "libgtest",
         "libgmock",
         "libcompositionengine",
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+        "libqticompositionengineextension",
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
+    ],
+    shared_libs: [
+        "server_configurable_flags",
     ],
     local_include_dirs: ["include"],
     export_include_dirs: ["include"],
@@ -139,7 +150,6 @@ cc_test {
         "libsurfaceflinger_common_test_deps",
     ],
     srcs: [
-        ":libcompositionengine_sources",
         ":libsurfaceflinger_backend_mock_sources",
         ":libsurfaceflinger_backend_sources",
         "tests/planner/CachedSetTest.cpp",
@@ -161,11 +171,15 @@ cc_test {
         "libsurfaceflinger_backend_mock_headers",
     ],
     static_libs: [
+        "libcompositionengine",
         "libcompositionengine_mocks",
         "libgui_mocks",
         "librenderengine_mocks",
         "libgmock",
         "libgtest",
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+        "libqticompositionengineextension",
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     ],
     shared_libs: [
         "libbinder_ndk",

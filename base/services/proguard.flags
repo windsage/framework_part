@@ -59,6 +59,8 @@
 
 # Referenced in wear-service
 -keep public class com.android.server.wm.WindowManagerInternal { *; }
+-keep public class com.android.server.wm.WindowManagerInternal$WindowFocusChangeListener { *; }
+-keep public class com.android.server.wm.ActivityAssistInfo { *; }
 
 # JNI keep rules
 # The global keep rule for native methods allows stripping of such methods if they're unreferenced
@@ -127,7 +129,15 @@
 -dontwarn android.os.**
 -dontwarn com.android.internal.util.**
 -dontwarn com.android.modules.utils.build.**
-
+# T-HUB Core [SDD]: add decoupling framework by lijia.chen 20220506 start
+-keep interface com.transsion.hubcore.** { *; }
+-keep public class com.transsion.hubcore.** { *; }
+-keep public interface vendor.mediatek.hardware.** { *; }
+-keep public interface vendor.transsion.hardware.** { *; }
+-keep public class com.android.server.wm.DisplayPolicy { *; }
+-keep public class com.android.server.am.ProcessRecord.TranProcessReordProxy { *; }
+-keep public class com.android.server.wm.WindowManagerService$TranWindowManagerServiceProxy { *; }
+# T-HUB Core [SDD]: add decoupling framework by lijia.chen 20220506 end
 # CoverageService guards optional jacoco class references with a runtime guard, so we can safely
 # suppress build-time warnings.
 -dontwarn org.jacoco.agent.rt.*

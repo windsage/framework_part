@@ -67,6 +67,11 @@ interface ISurfaceComposer {
         frameRateOverride = 1 << 1,
     }
 
+    enum OptimizationPolicy {
+        optimizeForPower = 0,
+        optimizeForPerformance = 1,
+    }
+
     /**
      * Signal that we're done booting.
      * Requires ACCESS_SURFACE_FLINGER permission
@@ -97,6 +102,10 @@ interface ISurfaceComposer {
      *     The name of the virtual display.
      * isSecure
      *     Whether this virtual display is secure.
+     * optimizationPolicy
+     *     Whether to optimize for power or performance. Displays that are optimizing for power may
+     *     be dependent on a different display that optimizes for performance when they are on,
+     *     which will guarantee performance for all of the other displays.
      * uniqueId
      *     The unique ID for the display.
      * requestedRefreshRate
@@ -108,7 +117,7 @@ interface ISurfaceComposer {
      * requires ACCESS_SURFACE_FLINGER permission.
      */
     @nullable IBinder createVirtualDisplay(@utf8InCpp String displayName, boolean isSecure,
-            @utf8InCpp String uniqueId, float requestedRefreshRate);
+            OptimizationPolicy optimizationPolicy, @utf8InCpp String uniqueId, float requestedRefreshRate);
 
     /**
      * Destroy a virtual display.
@@ -328,6 +337,20 @@ interface ISurfaceComposer {
      * Gets whether SurfaceFlinger can support protected content in GPU composition.
      */
     boolean getProtectedContentSupport();
+
+    //SPD:added for if sf uses client composition by song.tang 20230704 start
+    boolean getRequiresClientComposition();
+    //SPD:added for if sf uses client composition by song.tang 20230704 end
+
+    //SPD: add for sfcpupolicy by song.tang 20241120 start
+    oneway void setTransitionState(boolean isBegin);
+    //SPD: add for sfcpupolicy by song.tang 20241120 end
+
+    //SPD:add for sf thread info by sifeng.tian 20231117 start
+    int getSurfaceFlingerTid();
+    int getRenderEnginTid();
+    int[] getHwcTids();
+    //SPD:add for sf thread info by sifeng.tian 20231117 end
 
     /**
      * Queries whether the given display is a wide color display.
@@ -607,8 +630,14 @@ interface ISurfaceComposer {
     oneway void removeJankListener(int layerId, IJankListener listener, long afterVsync);
 
     /**
-     * Sets the listener used to monitor visible content that is being processed with picture
+     * Adds a listener used to monitor visible content that is being processed with picture
      * profiles.
      */
-    oneway void setActivePictureListener(IActivePictureListener listener);
+    oneway void addActivePictureListener(IActivePictureListener listener);
+
+    /**
+     * Removes a listener used to monitor visible content that is being processed with picture
+     * profiles.
+     */
+    oneway void removeActivePictureListener(IActivePictureListener listener);
 }

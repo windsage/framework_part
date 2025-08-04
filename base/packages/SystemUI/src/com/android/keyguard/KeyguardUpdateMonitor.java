@@ -37,12 +37,14 @@ import static android.hardware.biometrics.BiometricSourceType.FINGERPRINT;
 import static android.os.BatteryManager.BATTERY_STATUS_UNKNOWN;
 import static android.os.BatteryManager.CHARGING_POLICY_DEFAULT;
 import static android.telephony.SubscriptionManager.PROFILE_CLASS_PROVISIONING;
+import static android.telephony.SubscriptionManager.SUBSCRIPTION_TYPE_REMOTE_SIM;
 
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.SOME_AUTH_REQUIRED_AFTER_ADAPTIVE_AUTH_REQUEST;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_BOOT;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_DPM_LOCK_NOW;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_LOCKOUT;
 import static com.android.internal.widget.LockPatternUtils.StrongAuthTracker.STRONG_AUTH_REQUIRED_AFTER_USER_LOCKDOWN;
+import static com.android.systemui.Flags.glanceableHubV2;
 import static com.android.systemui.Flags.simPinBouncerReset;
 import static com.android.systemui.Flags.simPinUseSlotId;
 import static com.android.systemui.statusbar.policy.DevicePostureController.DEVICE_POSTURE_OPENED;
@@ -122,12 +124,12 @@ import com.android.settingslib.Utils;
 import com.android.settingslib.WirelessUtils;
 import com.android.settingslib.fuelgauge.BatteryStatus;
 import com.android.systemui.CoreStartable;
-import com.android.systemui.Dumpable;
 import com.android.systemui.Flags;
 import com.android.systemui.biometrics.AuthController;
 import com.android.systemui.biometrics.FingerprintInteractiveToAuthProvider;
 import com.android.systemui.bouncer.domain.interactor.AlternateBouncerInteractor;
 import com.android.systemui.broadcast.BroadcastDispatcher;
+import com.android.systemui.communal.domain.interactor.CommunalSceneInteractor;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
@@ -143,6 +145,9 @@ import com.android.systemui.deviceentry.shared.model.HelpFaceAuthenticationStatu
 import com.android.systemui.deviceentry.shared.model.SuccessFaceAuthenticationStatus;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.dump.DumpsysTableLogger;
+import com.android.systemui.keyguard.KeyguardWmStateRefactor;
+import com.android.systemui.keyguard.domain.interactor.KeyguardServiceShowLockscreenInteractor;
+import com.android.systemui.keyguard.domain.interactor.ShowWhileAwakeReason;
 import com.android.systemui.keyguard.shared.constants.TrustAgentUiEvent;
 import com.android.systemui.log.SessionTracker;
 import com.android.systemui.plugins.clocks.WeatherData;
@@ -150,7 +155,7 @@ import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.res.R;
 import com.android.systemui.scene.domain.interactor.SceneInteractor;
 import com.android.systemui.scene.shared.flag.SceneContainerFlag;
-import com.android.systemui.scene.shared.model.Scenes;
+import com.android.systemui.scene.shared.model.Overlays;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.ShadeDisplayAware;
 import com.android.systemui.shared.system.TaskStackChangeListener;
@@ -162,6 +167,9 @@ import com.android.systemui.statusbar.policy.DevicePostureController.DevicePostu
 import com.android.systemui.telephony.TelephonyListenerManager;
 import com.android.systemui.user.domain.interactor.SelectedUserInteractor;
 import com.android.systemui.util.Assert;
+// QTI_BEGIN: 2020-04-23: Android_UI: SystemUI: there is unexpected SIM PIN input dialog.
+import com.android.systemui.keyguard.KeyguardViewMediator;
+// QTI_END: 2020-04-23: Android_UI: SystemUI: there is unexpected SIM PIN input dialog.
 import com.android.systemui.util.kotlin.JavaAdapter;
 
 import dalvik.annotation.optimization.NeverCompile;
@@ -294,6 +302,9 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
     private final Provider<JavaAdapter> mJavaAdapter;
     private final Provider<SceneInteractor> mSceneInteractor;
     private final Provider<AlternateBouncerInteractor> mAlternateBouncerInteractor;
+    private final Provider<CommunalSceneInteractor> mCommunalSceneInteractor;
+    private final Provider<KeyguardServiceShowLockscreenInteractor>
+            mKeyguardServiceShowLockscreenInteractor;
     private final AuthController mAuthController;
     private final UiEventLogger mUiEventLogger;
     private final Set<String> mAllowFingerprintOnOccludingActivitiesFromPackage;
@@ -322,6 +333,9 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
     HashMap<Integer, SimData> mSimDatas = new HashMap<>();
     HashMap<Integer, SimData> mSimDatasBySlotId = new HashMap<>();
     HashMap<Integer, ServiceState> mServiceStates = new HashMap<>();
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+    HashMap<Integer, ServiceState> mServiceStatesWithSlotid = new HashMap<>();
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
 
     private int mPhoneState;
     private boolean mKeyguardShowing;
@@ -404,6 +418,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
     protected int mFingerprintRunningState = BIOMETRIC_STATE_STOPPED;
     private boolean mFingerprintDetectRunning;
     private boolean mIsDreaming;
+    private boolean mCommunalShowing;
     private int mActiveMobileDataSubscription = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
     private final FingerprintInteractiveToAuthProvider mFingerprintInteractiveToAuthProvider;
 
@@ -437,8 +452,12 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
     private final IBiometricEnabledOnKeyguardCallback mBiometricEnabledCallback =
             new IBiometricEnabledOnKeyguardCallback.Stub() {
                 @Override
-                public void onChanged(boolean enabled, int userId) {
+                public void onChanged(boolean enabled, int userId, int modality) {
                     mHandler.post(() -> {
+                        if (com.android.settings.flags.Flags.biometricsOnboardingEducation()
+                                && modality != TYPE_FINGERPRINT) {
+                            return;
+                        }
                         mBiometricEnabledForUser.put(userId, enabled);
                         updateFingerprintListeningState(BIOMETRIC_ACTION_UPDATE);
                     });
@@ -681,13 +700,16 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
      * @return List of SubscriptionInfo records, maybe empty but never null.
      *
      * Note that this method will filter out any subscription which is PROFILE_CLASS_PROVISIONING
+     * and REMOTE SIMs. REMOTE SIMs use an invalid slot index (-1).
      */
     public List<SubscriptionInfo> getSubscriptionInfo(boolean forceReload) {
         List<SubscriptionInfo> sil = mSubscriptionInfo;
         if (sil == null || forceReload) {
             mSubscriptionInfo = mSubscriptionManager.getCompleteActiveSubscriptionInfoList()
                     .stream()
-                    .filter(subInfo -> subInfo.getProfileClass() != PROFILE_CLASS_PROVISIONING)
+                    .filter(subInfo ->
+                            subInfo.getProfileClass() != PROFILE_CLASS_PROVISIONING
+                                && subInfo.getSubscriptionType() != SUBSCRIPTION_TYPE_REMOTE_SIM)
                     .toList();
         }
 
@@ -1746,9 +1768,15 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
                 ServiceState serviceState = ServiceState.newFromBundle(intent.getExtras());
                 int subId = intent.getIntExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX,
                         SubscriptionManager.INVALID_SUBSCRIPTION_ID);
-                mSimLogger.logServiceStateIntent(action, serviceState, subId);
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+                int slotId = intent.getIntExtra(SubscriptionManager.EXTRA_SLOT_INDEX,
+                        SubscriptionManager.INVALID_SIM_SLOT_INDEX);
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+                mSimLogger.logServiceStateIntent(action, serviceState, subId, slotId);
                 mHandler.sendMessage(
-                        mHandler.obtainMessage(MSG_SERVICE_STATE_CHANGE, subId, 0, serviceState));
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+                        mHandler.obtainMessage(MSG_SERVICE_STATE_CHANGE, subId, slotId, serviceState));
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
             } else if (TelephonyManager.ACTION_DEFAULT_DATA_SUBSCRIPTION_CHANGED.equals(action)) {
                 mHandler.sendEmptyMessage(MSG_SIM_SUBSCRIPTION_INFO_CHANGED);
             }
@@ -1987,6 +2015,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
                     state = TelephonyManager.SIM_STATE_PIN_REQUIRED;
                 } else if (Intent.SIM_LOCKED_ON_PUK.equals(lockedReason)) {
                     state = TelephonyManager.SIM_STATE_PUK_REQUIRED;
+                } else if (Intent.SIM_ABSENT_ON_PERM_DISABLED.equals(lockedReason)) {
+                    state = TelephonyManager.SIM_STATE_PERM_DISABLED;
                 } else if (Intent.SIM_LOCKED_NETWORK.equals(lockedReason)) {
                     state = TelephonyManager.SIM_STATE_NETWORK_LOCKED;
                 } else if (Intent.SIM_ABSENT_ON_PERM_DISABLED.equals(lockedReason)) {
@@ -1996,15 +2026,17 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
                 state = TelephonyManager.SIM_STATE_CARD_IO_ERROR;
             } else if (Intent.SIM_STATE_CARD_RESTRICTED.equals(stateExtra)) {
                 state = TelephonyManager.SIM_STATE_CARD_RESTRICTED;
+// QTI_BEGIN: 2023-03-11: Android_UI: SystemUI: Handle the SIM_STATE_NOT_READY state
             } else if (Intent.SIM_STATE_NOT_READY.equals(stateExtra)) {
                 state = TelephonyManager.SIM_STATE_NOT_READY;
+// QTI_END: 2023-03-11: Android_UI: SystemUI: Handle the SIM_STATE_NOT_READY state
             } else if (Intent.SIM_STATE_READY.equals(stateExtra)
                     || Intent.SIM_STATE_LOADED.equals(stateExtra)
                     || Intent.SIM_STATE_IMSI.equals(stateExtra)) {
                 // Mapping SIM_STATE_LOADED and SIM_STATE_IMSI to SIM_STATE_READY is required
                 // because telephony doesn't return to "READY" after
                 // these state transitions. See bug 7197471.
-                state = TelephonyManager.SIM_STATE_READY;
+               state = TelephonyManager.SIM_STATE_READY;
             }
             return new SimData(state, slotId, subId);
         }
@@ -2201,7 +2233,10 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
             IActivityTaskManager activityTaskManagerService,
             Provider<AlternateBouncerInteractor> alternateBouncerInteractor,
             Provider<JavaAdapter> javaAdapter,
-            Provider<SceneInteractor> sceneInteractor) {
+            Provider<SceneInteractor> sceneInteractor,
+            Provider<CommunalSceneInteractor> communalSceneInteractor,
+            Provider<KeyguardServiceShowLockscreenInteractor>
+                    keyguardServiceShowLockscreenInteractor) {
         mContext = context;
         mSubscriptionManager = subscriptionManager;
         mUserTracker = userTracker;
@@ -2250,6 +2285,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         mAlternateBouncerInteractor = alternateBouncerInteractor;
         mJavaAdapter = javaAdapter;
         mSceneInteractor = sceneInteractor;
+        mCommunalSceneInteractor = communalSceneInteractor;
+        mKeyguardServiceShowLockscreenInteractor = keyguardServiceShowLockscreenInteractor;
 
         mHandler = new Handler(mainLooper) {
             @Override
@@ -2309,7 +2346,9 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
                         handleAirplaneModeChanged();
                         break;
                     case MSG_SERVICE_STATE_CHANGE:
-                        handleServiceStateChange(msg.arg1, (ServiceState) msg.obj);
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+                        handleServiceStateChange(msg.arg1, msg.arg2, (ServiceState) msg.obj);
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
                         break;
                     case MSG_SERVICE_PROVIDERS_UPDATED:
                         handleServiceProvidersUpdated((Intent) msg.obj);
@@ -2424,8 +2463,13 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         mBackgroundExecutor.execute(() -> {
             int subId = SubscriptionManager.getDefaultSubscriptionId();
             ServiceState serviceState = mTelephonyManager.getServiceStateForSubscriber(subId);
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+            int slotId = SubscriptionManager.getSlotIndex(subId);
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
             mHandler.sendMessage(
-                    mHandler.obtainMessage(MSG_SERVICE_STATE_CHANGE, subId, 0, serviceState));
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+                    mHandler.obtainMessage(MSG_SERVICE_STATE_CHANGE, subId, slotId, serviceState));
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
         });
 
         final IntentFilter allUserFilter = new IntentFilter();
@@ -2531,6 +2575,20 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
             );
         }
 
+        if (KeyguardWmStateRefactor.isEnabled()) {
+            mJavaAdapter.get().alwaysCollectFlow(
+                    mKeyguardServiceShowLockscreenInteractor.get().getShowNowEvents(),
+                    this::onKeyguardServiceShowLockscreenNowEvents
+            );
+        }
+
+        if (glanceableHubV2()) {
+            mJavaAdapter.get().alwaysCollectFlow(
+                    mCommunalSceneInteractor.get().isCommunalVisible(),
+                    this::onCommunalShowingChanged
+            );
+        }
+
         // start() can be invoked in the middle of user switching, so check for this state and issue
         // the call manually as that important event was missed.
         if (mUserTracker.isUserSwitching()) {
@@ -2555,6 +2613,12 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         int primaryBouncerIsOrWillBeShowing =
                   isPrimaryBouncerShowingOrWillBeShowing(transitionState) ? 1 : 0;
         handlePrimaryBouncerChanged(primaryBouncerIsOrWillBeShowing, primaryBouncerFullyShown);
+    }
+
+    void onKeyguardServiceShowLockscreenNowEvents(ShowWhileAwakeReason reason) {
+        if (reason == ShowWhileAwakeReason.FOLDED_WITH_SWIPE_UP_TO_CONTINUE) {
+            mMainExecutor.execute(this::tryForceIsDismissibleKeyguard);
+        }
     }
 
     private void initializeSimState() {
@@ -2588,6 +2652,15 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
      */
     public boolean isUdfpsSupported() {
         return mAuthController.isUdfpsSupported();
+    }
+
+    /**
+     * @return true if optical udfps HW is supported on this device. Can return true even if the
+     * user has not enrolled udfps. This may be false if called before
+     * onAllAuthenticatorsRegistered.
+     */
+    public boolean isOpticalUdfpsSupported() {
+        return mAuthController.isOpticalUdfpsSupported();
     }
 
     /**
@@ -2824,6 +2897,15 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
     }
 
     /**
+     * Sets whether the communal hub is showing.
+     */
+    @VisibleForTesting
+    void onCommunalShowingChanged(boolean showing) {
+        mCommunalShowing = showing;
+        updateFingerprintListeningState(BIOMETRIC_ACTION_UPDATE);
+    }
+
+    /**
      * Whether the alternate bouncer is showing.
      */
     public void setAlternateBouncerShowing(boolean showing) {
@@ -2865,14 +2947,14 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
     private boolean isPrimaryBouncerShowingOrWillBeShowing(
             ObservableTransitionState transitionState
     ) {
-        SceneContainerFlag.assertInNewMode();
+        SceneContainerFlag.unsafeAssertInNewMode();
         return isPrimaryBouncerFullyShown(transitionState)
-                || transitionState.isTransitioning(null, Scenes.Bouncer);
+                || transitionState.isTransitioning(null, Overlays.Bouncer);
     }
 
     private boolean isPrimaryBouncerFullyShown(ObservableTransitionState transitionState) {
-        SceneContainerFlag.assertInNewMode();
-        return transitionState.isIdle(Scenes.Bouncer);
+        SceneContainerFlag.unsafeAssertInNewMode();
+        return transitionState.isIdle(Overlays.Bouncer);
     }
 
     /**
@@ -2985,11 +3067,14 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         final boolean strongerAuthRequired = !isUnlockingWithFingerprintAllowed();
         final boolean shouldListenBouncerState =
                 !strongerAuthRequired || !isPrimaryBouncerShowingOrWillBeShowing();
+        final boolean isUdfpsAuthRequiredOnCommunal =
+                !mCommunalShowing || isAlternateBouncerShowing();
 
         final boolean shouldListenUdfpsState = !isUdfps
                 || (!userCanSkipBouncer
                 && !strongerAuthRequired
-                && userDoesNotHaveTrust);
+                && userDoesNotHaveTrust
+                && (!glanceableHubV2() || isUdfpsAuthRequiredOnCommunal));
 
 
         boolean shouldListen = shouldListenKeyguardState && shouldListenUserState
@@ -3020,7 +3105,8 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
                     mSwitchingUser,
                     mIsSystemUser,
                     isUdfps,
-                    userDoesNotHaveTrust));
+                    userDoesNotHaveTrust,
+                    mCommunalShowing));
 
         return shouldListen;
     }
@@ -3319,6 +3405,11 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         }
     }
 
+    /** Triggers an out of band time update */
+    public void triggerTimeUpdate() {
+        mHandler.sendEmptyMessage(MSG_TIME_UPDATE);
+    }
+
     /**
      * Handle {@link #MSG_TIME_UPDATE}
      */
@@ -3448,6 +3539,9 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         mSimLogger.logSimState(subId, slotId, TelephonyManager.simStateToString(state));
 
         boolean becameAbsent = ABSENT_SIM_STATE_LIST.contains(state);
+// QTI_BEGIN: 2023-03-11: Android_UI: SystemUI: Handle the SIM_STATE_NOT_READY state
+        boolean becameNotReady = false;
+// QTI_END: 2023-03-11: Android_UI: SystemUI: Handle the SIM_STATE_NOT_READY state
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             mSimLogger.w("invalid subId in handleSimStateChange()");
             /* Only handle No SIM(ABSENT) and Card Error(CARD_IO_ERROR) due to
@@ -3455,6 +3549,28 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
             if (state == TelephonyManager.SIM_STATE_ABSENT
                     || state == TelephonyManager.SIM_STATE_CARD_IO_ERROR) {
                 updateTelephonyCapable(true);
+// QTI_BEGIN: 2023-03-11: Android_UI: SystemUI: Handle the SIM_STATE_NOT_READY state
+            } else if (state == TelephonyManager.SIM_STATE_NOT_READY) {
+                becameNotReady = true;
+// QTI_END: 2023-03-11: Android_UI: SystemUI: Handle the SIM_STATE_NOT_READY state
+// QTI_BEGIN: 2024-12-17: Android_UI: SystemUI: Adapt change for dual sims.
+                if (simPinUseSlotId()) {
+                    for (SimData data : mSimDatasBySlotId.values()) {
+                        if (data.slotId == slotId) {
+                            data.simState = TelephonyManager.SIM_STATE_NOT_READY;
+                        }
+                    }
+                } else {
+                    for (SimData data : mSimDatas.values()) {
+                        if (data.slotId == slotId) {
+                            data.simState = TelephonyManager.SIM_STATE_NOT_READY;
+                        }
+// QTI_END: 2024-12-17: Android_UI: SystemUI: Adapt change for dual sims.
+// QTI_BEGIN: 2023-03-11: Android_UI: SystemUI: Handle the SIM_STATE_NOT_READY state
+                    }
+                }
+// QTI_END: 2023-03-11: Android_UI: SystemUI: Handle the SIM_STATE_NOT_READY state
+
             }
             invalidateSlot(slotId);
         }
@@ -3477,7 +3593,7 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
                 data.subId = subId;
                 data.slotId = slotId;
             }
-            if ((changed || becameAbsent)) {
+            if ((changed || becameAbsent || becameNotReady)) {
                 for (int i = 0; i < mCallbacks.size(); i++) {
                     KeyguardUpdateMonitorCallback cb = mCallbacks.get(i).get();
                     if (cb != null) {
@@ -3492,11 +3608,25 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
      * Handle {@link #MSG_SERVICE_STATE_CHANGE}
      */
     @VisibleForTesting
-    void handleServiceStateChange(int subId, ServiceState serviceState) {
-        mSimLogger.logServiceStateChange(subId, serviceState);
-
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+    void handleServiceStateChange(int subId, int slotId, ServiceState serviceState) {
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+        mSimLogger.logServiceStateChange(subId, slotId, serviceState);
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+        if (serviceState != null) {
+            mServiceStatesWithSlotid.put(slotId, serviceState);
+        }
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
         if (!SubscriptionManager.isValidSubscriptionId(subId)) {
             mSimLogger.w("invalid subId in handleServiceStateChange()");
+// QTI_BEGIN: 2020-09-10: Android_UI: SystemUI: show emergency button on lock screen
+            for (int j = 0; j < mCallbacks.size(); j++) {
+                KeyguardUpdateMonitorCallback cb = mCallbacks.get(j).get();
+                if (cb != null) {
+                    cb.onServiceStateChanged(subId, serviceState);
+                }
+            }
+// QTI_END: 2020-09-10: Android_UI: SystemUI: show emergency button on lock screen
             return;
         } else {
             updateTelephonyCapable(true);
@@ -3504,7 +3634,17 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
 
         mServiceStates.put(subId, serviceState);
 
-        callbacksRefreshCarrierInfo();
+        // The upstream method (callbacksRefreshCarrierInfo) does not subId or
+        // serviceState as input. Thus onServiceStateChanged cannot be called
+        // from that new method. For now, re-use the same logic as before here
+        // instead of a call to callbacksRefreshCarrierInfo.
+        for (int j = 0; j < mCallbacks.size(); j++) {
+            KeyguardUpdateMonitorCallback cb = mCallbacks.get(j).get();
+            if (cb != null) {
+                cb.onRefreshCarrierInfo();
+                cb.onServiceStateChanged(subId, serviceState);
+            }
+        }
     }
 
     /**
@@ -3817,6 +3957,13 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         return mServiceStates.get(subId);
     }
 
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+    public ServiceState getServiceStateWithSlotid(int slotId) {
+        ServiceState ss = mServiceStatesWithSlotid.get(slotId);
+        return ss;
+    }
+
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
     /**
      * Resets the fingerprint authenticated state to false.
      */
@@ -3898,8 +4045,10 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
                     + "simPinUseSlotId");
         }
         synchronized (mSimDataLockObject) {
+// QTI_BEGIN: 2024-12-17: Android_UI: SystemUI: Adapt change for dual sims.
             if (mSimDatas.containsKey(subId)) {
                 return mSimDatas.get(subId).simState;
+// QTI_END: 2024-12-17: Android_UI: SystemUI: Adapt change for dual sims.
             } else {
                 return TelephonyManager.SIM_STATE_UNKNOWN;
             }
@@ -3973,8 +4122,9 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
      * @return true if and only if the state has changed for the specified {@code slotId}
      */
     private boolean refreshSimState(int subId, int slotId) {
-        int state = mTelephonyManager.getSimState(slotId);
         synchronized (mSimDataLockObject) {
+            int state = mTelephonyManager.getSimState(slotId);
+
             if (!SubscriptionManager.isValidSubscriptionId(subId)) {
                 invalidateSlot(slotId);
             }
@@ -3990,8 +4140,10 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
                 }
                 changed = true; // no data yet; force update
             } else {
-                changed = data.simState != state;
+                changed = (data.simState != state) || (data.slotId != slotId) || (data.subId != subId);
                 data.simState = state;
+                data.slotId = slotId;
+                data.subId = subId;
             }
             return changed;
         }
@@ -4099,6 +4251,46 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         return resultId;
     }
 
+// QTI_BEGIN: 2020-04-23: Android_UI: SystemUI: there is unexpected SIM PIN input dialog.
+
+    /**
+     * Find the Unlocked SubscriptionId for a SIM in the given state,
+     * @param state
+     * @return subid or {@link SubscriptionManager#INVALID_SUBSCRIPTION_ID} if none found
+     */
+    public int getUnlockedSubIdForState(int state) {
+        List<SubscriptionInfo> list = getSubscriptionInfo(false /* forceReload */);
+        int resultId = SubscriptionManager.INVALID_SUBSCRIPTION_ID;
+        for (int i = 0; i < list.size(); i++) {
+            final SubscriptionInfo info = list.get(i);
+            final int id = info.getSubscriptionId();
+            int slotId = SubscriptionManager.getSlotIndex(id);
+// QTI_END: 2020-04-23: Android_UI: SystemUI: there is unexpected SIM PIN input dialog.
+// QTI_BEGIN: 2024-12-17: Android_UI: SystemUI: Adapt change for dual sims.
+            if (simPinUseSlotId()) {
+                if (state == getSimStateForSlotId(slotId)
+                        && (KeyguardViewMediator.getUnlockTrackSimState(slotId)
+                        != TelephonyManager.SIM_STATE_READY)) {
+                    resultId = id;
+                    break;
+                }
+            } else {
+                if (state == getSimState(id) && (KeyguardViewMediator.getUnlockTrackSimState(slotId)
+                        != TelephonyManager.SIM_STATE_READY)) {
+                    resultId = id;
+                    break;
+                }
+// QTI_END: 2024-12-17: Android_UI: SystemUI: Adapt change for dual sims.
+// QTI_BEGIN: 2020-04-23: Android_UI: SystemUI: there is unexpected SIM PIN input dialog.
+            }
+// QTI_END: 2020-04-23: Android_UI: SystemUI: there is unexpected SIM PIN input dialog.
+
+// QTI_BEGIN: 2020-04-23: Android_UI: SystemUI: there is unexpected SIM PIN input dialog.
+        }
+        return resultId;
+    }
+
+// QTI_END: 2020-04-23: Android_UI: SystemUI: there is unexpected SIM PIN input dialog.
     public SubscriptionInfo getSubscriptionInfoForSubId(int subId) {
         List<SubscriptionInfo> list = getSubscriptionInfo(false /* forceReload */);
         for (int i = 0; i < list.size(); i++) {
@@ -4154,6 +4346,46 @@ public class KeyguardUpdateMonitor implements TrustManager.TrustListener, CoreSt
         mHandler.removeCallbacksAndMessages(null);
     }
 
+// QTI_BEGIN: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+    public boolean isOOS() {
+        boolean ret = true;
+        int phoneCount = mTelephonyManager.getActiveModemCount();
+        for (int phoneId = 0; phoneId < phoneCount; phoneId++) {
+            int[] subId = mSubscriptionManager.getSubscriptionIds(phoneId);
+            if (subId != null && subId.length >= 1) {
+// QTI_END: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+                mLogger.v("slot id:" + phoneId + " subId:" + subId[0]);
+// QTI_BEGIN: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+                ServiceState state = mServiceStates.get(subId[0]);
+                if (state != null) {
+                    if (state.isEmergencyOnly()) {
+                        ret = false;
+                    } else if ((state.getVoiceRegState() != ServiceState.STATE_OUT_OF_SERVICE)
+                            && (state.getVoiceRegState() != ServiceState.STATE_POWER_OFF)) {
+                        ret = false;
+                    }
+// QTI_END: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+                    mLogger.v("is emergency: " + state.isEmergencyOnly()
+                            + "voice state: " + state.getVoiceRegState());
+// QTI_BEGIN: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+                } else {
+// QTI_END: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+                    mLogger.v("state is NULL");
+// QTI_BEGIN: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+                }
+            }
+        }
+
+        return ret;
+    }
+
+// QTI_END: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+// QTI_BEGIN: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
+    public int getActiveSlots() {
+        return mTelephonyManager.getActiveModemCount();
+    }
+
+// QTI_END: 2024-05-16: Android_UI: SystemUI: Update EmergencyButton display logic
     @SuppressLint("MissingPermission")
     @NeverCompile
     @Override

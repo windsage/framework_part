@@ -22,13 +22,10 @@ import static android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
 import static android.view.Display.TYPE_EXTERNAL;
 import static android.view.Display.TYPE_OVERLAY;
 import static android.view.Display.TYPE_VIRTUAL;
-import static android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_CROSSFADE;
-import static android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_JUMPCUT;
-import static android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_ROTATE;
 import static android.view.WindowManager.LayoutParams.ROTATION_ANIMATION_SEAMLESS;
 
-import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_ANIM;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_ORIENTATION;
+import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_ORIENTATION_CHANGE;
 import static com.android.server.policy.WindowManagerPolicy.WindowManagerFuncs.LID_OPEN;
 import static com.android.server.wm.DisplayRotationProto.FIXED_TO_USER_ROTATION_MODE;
 import static com.android.server.wm.DisplayRotationProto.FROZEN_TO_USER_ROTATION;
@@ -41,22 +38,28 @@ import static com.android.server.wm.DisplayRotationReversionController.REVERSION
 import static com.android.server.wm.DisplayRotationReversionController.REVERSION_TYPE_NOSENSOR;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
-import static com.android.server.wm.WindowManagerService.WINDOWS_FREEZING_SCREENS_ACTIVE;
-import static com.android.server.wm.WindowManagerService.WINDOW_FREEZE_TIMEOUT_DURATION;
 
-import android.annotation.AnimRes;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.ActivityManager;
+// QTI_BEGIN: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
+import android.content.BroadcastReceiver;
+// QTI_END: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+// QTI_BEGIN: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
+import android.content.IntentFilter;
+// QTI_END: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
 import android.content.pm.ActivityInfo;
 import android.content.pm.ActivityInfo.ScreenOrientation;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
 import android.database.ContentObserver;
+// QTI_BEGIN: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
+import android.hardware.display.DeviceProductInfo;
+// QTI_END: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -74,6 +77,9 @@ import android.util.TimeUtils;
 import android.util.proto.ProtoOutputStream;
 import android.view.DisplayAddress;
 import android.view.IWindowManager;
+// QTI_BEGIN: 2024-05-28: Display: wm: avoid invalid typecasting of network to physical display address.
+import android.view.Display;
+// QTI_END: 2024-05-28: Display: wm: avoid invalid typecasting of network to physical display address.
 import android.view.Surface;
 import android.window.TransitionRequestInfo;
 import android.window.WindowContainerTransaction;
@@ -84,6 +90,7 @@ import com.android.internal.protolog.ProtoLog;
 import com.android.server.UiThread;
 import com.android.server.policy.WindowManagerPolicy;
 import com.android.server.statusbar.StatusBarManagerInternal;
+import com.android.window.flags.Flags;
 
 import java.io.PrintWriter;
 import java.lang.annotation.Retention;
@@ -104,13 +111,6 @@ public class DisplayRotation {
 
     private static final int ROTATION_UNDEFINED = -1;
 
-    private static class RotationAnimationPair {
-        @AnimRes
-        int mEnter;
-        @AnimRes
-        int mExit;
-    }
-
     @Nullable
     final FoldController mFoldController;
 
@@ -120,8 +120,16 @@ public class DisplayRotation {
     private final DisplayWindowSettings mDisplayWindowSettings;
     private final Context mContext;
     private final Object mLock;
+// QTI_BEGIN: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
+    /* QTI_BEGIN */
+    private final boolean overrideMirroring;
+    private final boolean isBuiltin;
+    /* QTI_END */
+// QTI_END: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
     @Nullable
     private final DisplayRotationImmersiveAppCompatPolicy mCompatPolicyForImmersiveApps;
+    @Nullable
+    private DeviceStateAutoRotateSettingController mDeviceStateAutoRotateSettingController;
 
     public final boolean isDefaultDisplay;
     private final boolean mSupportAutoRotation;
@@ -130,7 +138,6 @@ public class DisplayRotation {
     private final int mCarDockRotation;
     private final int mDeskDockRotation;
     private final int mUndockedHdmiRotation;
-    private final RotationAnimationPair mTmpRotationAnim = new RotationAnimationPair();
     private final RotationHistory mRotationHistory = new RotationHistory();
     private final RotationLockHistory mRotationLockHistory = new RotationLockHistory();
 
@@ -177,19 +184,6 @@ public class DisplayRotation {
     private boolean mAllowSeamlessRotationDespiteNavBarMoving;
 
     private int mDeferredRotationPauseCount;
-
-    /**
-     * A count of the windows which are 'seamlessly rotated', e.g. a surface at an old orientation
-     * is being transformed. We freeze orientation updates while any windows are seamlessly rotated,
-     * so we need to track when this hits zero so we can apply deferred orientation updates.
-     */
-    private int mSeamlessRotationCount;
-
-    /**
-     * True in the interval from starting seamless rotation until the last rotated window draws in
-     * the new orientation.
-     */
-    private boolean mRotatingSeamlessly;
 
     /**
      * Behavior of rotation suggestions.
@@ -249,6 +243,37 @@ public class DisplayRotation {
     private boolean mDemoHdmiRotationLock;
     private boolean mDemoRotationLock;
 
+// QTI_BEGIN: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
+    /**
+     * Broadcast Action: WiFi Display video is enabled or disabled
+     *
+     * <p>The intent will have the following extra values:</p>
+     * <ul>
+     *    <li><em>state</em> - 0 for disabled, 1 for enabled. </li>
+     * </ul>
+     */
+
+    private static final String ACTION_WIFI_DISPLAY_VIDEO =
+                    "org.codeaurora.intent.action.WIFI_DISPLAY_VIDEO";
+
+// QTI_END: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
+// QTI_BEGIN: 2022-02-01: Video: display: check WFD broadcaster's permission
+    /**
+     * Broadcast Permission for Wifi Display
+     */
+
+    private static final String WIFI_DISPLAY_PERMISSION =
+                    "com.qualcomm.permission.wfd.QC_WFD";
+
+// QTI_END: 2022-02-01: Video: display: check WFD broadcaster's permission
+// QTI_BEGIN: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
+    /**
+     * Wifi Display specific variables
+     */
+    private boolean mWifiDisplayConnected = false;
+    private int mWifiDisplayRotation = -1;
+
+// QTI_END: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
     DisplayRotation(WindowManagerService service, DisplayContent displayContent,
             DisplayAddress displayAddress, @NonNull DeviceStateController deviceStateController,
             @NonNull DisplayRotationCoordinator displayRotationCoordinator) {
@@ -286,7 +311,21 @@ public class DisplayRotation {
         mRotation = defaultRotation;
 
         mDisplayRotationCoordinator = displayRotationCoordinator;
-        if (isDefaultDisplay) {
+// QTI_BEGIN: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
+
+        /* QTI_BEGIN */
+        overrideMirroring =
+                SystemProperties.getBoolean("vendor.display.override_mirroring_rotation", false);
+
+// QTI_END: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
+// QTI_BEGIN: 2024-05-28: Display: wm: avoid invalid typecasting of network to physical display address.
+        isBuiltin = (displayContent.mDisplay.getType() == Display.TYPE_INTERNAL);
+// QTI_END: 2024-05-28: Display: wm: avoid invalid typecasting of network to physical display address.
+// QTI_BEGIN: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
+        /* QTI_END */
+
+        if (/* QTI_BEGIN */ (overrideMirroring && isBuiltin) || /* QTI_END */ isDefaultDisplay) {
+// QTI_END: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
             mDisplayRotationCoordinator.setDefaultDisplayDefaultRotation(mRotation);
         }
         mDefaultDisplayRotationChangedCallback = this::updateRotationAndSendNewConfigIfChanged;
@@ -298,7 +337,9 @@ public class DisplayRotation {
                     displayContent.getDisplayId(), mDefaultDisplayRotationChangedCallback);
         }
 
-        if (isDefaultDisplay) {
+// QTI_BEGIN: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
+        if (/* QTI_BEGIN */ (overrideMirroring && isBuiltin) || /* QTI_END */ isDefaultDisplay) {
+// QTI_END: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
             final Handler uiHandler = UiThread.getHandler();
             mOrientationListener =
                     new OrientationListener(mContext, uiHandler, defaultRotation);
@@ -310,8 +351,71 @@ public class DisplayRotation {
             } else {
                 mFoldController = null;
             }
+// QTI_BEGIN: 2019-11-19: Video: wm::DisplayRotation: Limit WFD UIBC rotation to primary displays
+
+            /* Register for WIFI Display Intents in a separate thread
+             * to avoid possible deadlock between ActivityManager and
+             * WindowManager global locks*/
+            Thread t = new Thread(){
+                public void run() {
+                    context.registerReceiver(new BroadcastReceiver(){
+                        public void onReceive(Context context, Intent intent) {
+                            String action = intent.getAction();
+                            if (action.equals(ACTION_WIFI_DISPLAY_VIDEO)) {
+                                int state = intent.getIntExtra("state", 0);
+                                if(state == 1) {
+                                    mWifiDisplayConnected = true;
+                                } else {
+                                    mWifiDisplayConnected = false;
+                                }
+                                int rotation = intent.getIntExtra("wfd_UIBC_rot", -1);
+                                switch (rotation) {
+                                    case 0:
+                                        mWifiDisplayRotation = Surface.ROTATION_0;
+                                        break;
+                                    case 1:
+                                        mWifiDisplayRotation = Surface.ROTATION_90;
+                                        break;
+                                    case 2:
+                                        mWifiDisplayRotation = Surface.ROTATION_180;
+                                        break;
+                                    case 3:
+                                        mWifiDisplayRotation = Surface.ROTATION_270;
+                                        break;
+                                    default:
+                                        mWifiDisplayRotation = -1;
+                                }
+                                mService.updateRotation(true /* alwaysSendConfiguration */,
+                                        false/* forceRelayout */);
+// QTI_END: 2019-11-19: Video: wm::DisplayRotation: Limit WFD UIBC rotation to primary displays
+// QTI_BEGIN: 2019-04-18: Video: wm: Use a different execution context to register WFD rotation receiver
+                            }
+                        }
+// QTI_END: 2019-04-18: Video: wm: Use a different execution context to register WFD rotation receiver
+// QTI_BEGIN: 2022-02-01: Video: display: check WFD broadcaster's permission
+                    }, new IntentFilter(ACTION_WIFI_DISPLAY_VIDEO),
+                        WIFI_DISPLAY_PERMISSION,
+// QTI_END: 2022-02-01: Video: display: check WFD broadcaster's permission
+                        UiThread.getHandler()
+                    , Context.RECEIVER_EXPORTED);
+// QTI_BEGIN: 2019-11-19: Video: wm::DisplayRotation: Limit WFD UIBC rotation to primary displays
+                }
+            };
+            t.start();
+// QTI_END: 2019-11-19: Video: wm::DisplayRotation: Limit WFD UIBC rotation to primary displays
         } else {
             mFoldController = null;
+// QTI_BEGIN: 2019-11-19: Video: wm::DisplayRotation: Limit WFD UIBC rotation to primary displays
+        }
+// QTI_END: 2019-11-19: Video: wm::DisplayRotation: Limit WFD UIBC rotation to primary displays
+// QTI_BEGIN: 2019-04-18: Video: wm: Use a different execution context to register WFD rotation receiver
+// QTI_END: 2019-04-18: Video: wm: Use a different execution context to register WFD rotation receiver
+        if (mFoldController != null && (Flags.enableDeviceStateAutoRotateSettingLogging()
+                || Flags.enableDeviceStateAutoRotateSettingRefactor())) {
+            mDeviceStateAutoRotateSettingController =
+                    new DeviceStateAutoRotateSettingController(mContext,
+                            new DeviceStateAutoRotateSettingIssueLogger(
+                                    SystemClock::elapsedRealtime), mService.mH);
         }
     }
 
@@ -540,14 +644,6 @@ public class DisplayRotation {
                 ProtoLog.v(WM_DEBUG_ORIENTATION, "Deferring rotation, animation in progress.");
                 return false;
             }
-            if (mService.mDisplayFrozen) {
-                // Even if the screen rotation animation has finished (e.g. isAnimating returns
-                // false), there is still some time where we haven't yet unfrozen the display. We
-                // also need to abort rotation here.
-                ProtoLog.v(WM_DEBUG_ORIENTATION,
-                        "Deferring rotation, still finishing previous rotation");
-                return false;
-            }
 
             if (mDisplayContent.mFixedRotationTransitionListener.shouldDeferRotation()) {
                 // Makes sure that after the transition is finished, updateOrientation() can see
@@ -599,11 +695,6 @@ public class DisplayRotation {
                 ActivityInfo.screenOrientationToString(lastOrientation), lastOrientation,
                 Surface.rotationToString(oldRotation), oldRotation);
 
-        ProtoLog.v(WM_DEBUG_ORIENTATION,
-                "Display id=%d selected orientation %s (%d), got rotation %s (%d)", displayId,
-                ActivityInfo.screenOrientationToString(lastOrientation), lastOrientation,
-                Surface.rotationToString(rotation), rotation);
-
         if (oldRotation == rotation) {
             // No change.
             return false;
@@ -613,9 +704,11 @@ public class DisplayRotation {
             mDisplayRotationCoordinator.onDefaultDisplayRotationChanged(rotation);
         }
 
-        ProtoLog.v(WM_DEBUG_ORIENTATION,
-                "Display id=%d rotation changed to %d from %d, lastOrientation=%d",
-                        displayId, rotation, oldRotation, lastOrientation);
+        ProtoLog.i(WM_DEBUG_ORIENTATION_CHANGE, "Display id=%d rotation changed to %d from %d,"
+                        + " lastOrientation=%d userRotationMode=%d userRotation=%d"
+                        + " lastSensorRotation=%d",
+                displayId, rotation, oldRotation, lastOrientation, mUserRotationMode, mUserRotation,
+                mLastSensorRotation);
 
         mRotation = rotation;
 
@@ -642,19 +735,6 @@ public class DisplayRotation {
                 startRemoteRotation(oldRotation, mRotation);
             }
             return true;
-        }
-
-        mService.mWindowsFreezingScreen = WINDOWS_FREEZING_SCREENS_ACTIVE;
-        mService.mH.sendNewMessageDelayed(WindowManagerService.H.WINDOW_FREEZE_TIMEOUT,
-                mDisplayContent, WINDOW_FREEZE_TIMEOUT_DURATION);
-
-        if (shouldRotateSeamlessly(oldRotation, rotation, forceUpdate)) {
-            // The screen rotation animation uses a screenshot to freeze the screen while windows
-            // resize underneath. When we are rotating seamlessly, we allow the elements to
-            // transition to their rotated state independently and without a freeze required.
-            prepareSeamlessRotation();
-        } else {
-            prepareNormalRotationAnimation();
         }
 
         // Give a remote handler (system ui) some time to reposition things.
@@ -695,48 +775,6 @@ public class DisplayRotation {
         }
     }
 
-    void prepareNormalRotationAnimation() {
-        cancelSeamlessRotation();
-        final RotationAnimationPair anim = selectRotationAnimation();
-        mService.startFreezingDisplay(anim.mExit, anim.mEnter, mDisplayContent);
-    }
-
-    /**
-     * This ensures that normal rotation animation is used. E.g. {@link #mRotatingSeamlessly} was
-     * set by previous {@link #updateRotationUnchecked}, but another orientation change happens
-     * before calling {@link DisplayContent#sendNewConfiguration} (remote rotation hasn't finished)
-     * and it doesn't choose seamless rotation.
-     */
-    void cancelSeamlessRotation() {
-        if (!mRotatingSeamlessly) {
-            return;
-        }
-        mDisplayContent.forAllWindows(w -> {
-            if (w.mSeamlesslyRotated) {
-                w.cancelSeamlessRotation();
-                w.mSeamlesslyRotated = false;
-            }
-        }, true /* traverseTopToBottom */);
-        mSeamlessRotationCount = 0;
-        mRotatingSeamlessly = false;
-        mDisplayContent.finishAsyncRotationIfPossible();
-    }
-
-    private void prepareSeamlessRotation() {
-        // We are careful to reset this in case a window was removed before it finished
-        // seamless rotation.
-        mSeamlessRotationCount = 0;
-        mRotatingSeamlessly = true;
-    }
-
-    boolean isRotatingSeamlessly() {
-        return mRotatingSeamlessly;
-    }
-
-    boolean hasSeamlessRotatingWindow() {
-        return mSeamlessRotationCount > 0;
-    }
-
     @VisibleForTesting
     boolean shouldRotateSeamlessly(int oldRotation, int newRotation, boolean forceUpdate) {
         // Display doesn't need to be frozen because application has been started in correct
@@ -752,7 +790,7 @@ public class DisplayRotation {
         // We only enable seamless rotation if the top window has requested it and is in the
         // fullscreen opaque state. Seamless rotation requires freezing various Surface states and
         // won't work well with animations, so we disable it in the animation case for now.
-        if (w.getAttrs().rotationAnimation != ROTATION_ANIMATION_SEAMLESS || w.inMultiWindowMode()
+        if (w.mAttrs.rotationAnimation != ROTATION_ANIMATION_SEAMLESS || w.inMultiWindowMode()
                 || w.isAnimatingLw()) {
             return false;
         }
@@ -774,13 +812,6 @@ public class DisplayRotation {
             return false;
         }
 
-        // We can't rotate (seamlessly or not) while waiting for the last seamless rotation to
-        // complete (that is, waiting for windows to redraw). It's tempting to check
-        // mSeamlessRotationCount but that could be incorrect in the case of window-removal.
-        if (!forceUpdate && mDisplayContent.getWindow(win -> win.mSeamlesslyRotated) != null) {
-            return false;
-        }
-
         return true;
     }
 
@@ -796,101 +827,6 @@ public class DisplayRotation {
         // will not enter the reverse portrait orientation, so actually the orientation won't change
         // at all.
         return oldRotation != Surface.ROTATION_180 && newRotation != Surface.ROTATION_180;
-    }
-
-    void markForSeamlessRotation(WindowState w, boolean seamlesslyRotated) {
-        if (seamlesslyRotated == w.mSeamlesslyRotated || w.mForceSeamlesslyRotate) {
-            return;
-        }
-
-        w.mSeamlesslyRotated = seamlesslyRotated;
-        if (seamlesslyRotated) {
-            mSeamlessRotationCount++;
-        } else {
-            mSeamlessRotationCount--;
-        }
-        if (mSeamlessRotationCount == 0) {
-            ProtoLog.i(WM_DEBUG_ORIENTATION,
-                    "Performing post-rotate rotation after seamless rotation");
-            // Finish seamless rotation.
-            mRotatingSeamlessly = false;
-            mDisplayContent.finishAsyncRotationIfPossible();
-
-            updateRotationAndSendNewConfigIfChanged();
-        }
-    }
-
-    /**
-     * Returns the animation to run for a rotation transition based on the top fullscreen windows
-     * {@link android.view.WindowManager.LayoutParams#rotationAnimation} and whether it is currently
-     * fullscreen and frontmost.
-     */
-    private RotationAnimationPair selectRotationAnimation() {
-        // If the screen is off or non-interactive, force a jumpcut.
-        final boolean forceJumpcut = !mDisplayPolicy.isScreenOnFully()
-                || !mService.mPolicy.okToAnimate(false /* ignoreScreenOn */);
-        final WindowState topFullscreen = mDisplayPolicy.getTopFullscreenOpaqueWindow();
-        ProtoLog.i(WM_DEBUG_ANIM, "selectRotationAnimation topFullscreen=%s"
-                + " rotationAnimation=%d forceJumpcut=%b",
-                topFullscreen,
-                topFullscreen == null ? 0 : topFullscreen.getAttrs().rotationAnimation,
-                forceJumpcut);
-        if (forceJumpcut) {
-            mTmpRotationAnim.mExit = R.anim.rotation_animation_jump_exit;
-            mTmpRotationAnim.mEnter = R.anim.rotation_animation_enter;
-            return mTmpRotationAnim;
-        }
-        if (topFullscreen != null) {
-            int animationHint = topFullscreen.getRotationAnimationHint();
-            if (animationHint < 0 && mDisplayPolicy.isTopLayoutFullscreen()) {
-                animationHint = topFullscreen.getAttrs().rotationAnimation;
-            }
-            switch (animationHint) {
-                case ROTATION_ANIMATION_CROSSFADE:
-                case ROTATION_ANIMATION_SEAMLESS: // Crossfade is fallback for seamless.
-                    mTmpRotationAnim.mExit = R.anim.rotation_animation_xfade_exit;
-                    mTmpRotationAnim.mEnter = R.anim.rotation_animation_enter;
-                    break;
-                case ROTATION_ANIMATION_JUMPCUT:
-                    mTmpRotationAnim.mExit = R.anim.rotation_animation_jump_exit;
-                    mTmpRotationAnim.mEnter = R.anim.rotation_animation_enter;
-                    break;
-                case ROTATION_ANIMATION_ROTATE:
-                default:
-                    mTmpRotationAnim.mExit = mTmpRotationAnim.mEnter = 0;
-                    break;
-            }
-        } else {
-            mTmpRotationAnim.mExit = mTmpRotationAnim.mEnter = 0;
-        }
-        return mTmpRotationAnim;
-    }
-
-    /**
-     * Validate whether the current top fullscreen has specified the same
-     * {@link android.view.WindowManager.LayoutParams#rotationAnimation} value as that being passed
-     * in from the previous top fullscreen window.
-     *
-     * @param exitAnimId exiting resource id from the previous window.
-     * @param enterAnimId entering resource id from the previous window.
-     * @param forceDefault For rotation animations only, if true ignore the animation values and
-     *                     just return false.
-     * @return {@code true} if the previous values are still valid, false if they should be replaced
-     *         with the default.
-     */
-    boolean validateRotationAnimation(int exitAnimId, int enterAnimId, boolean forceDefault) {
-        switch (exitAnimId) {
-            case R.anim.rotation_animation_xfade_exit:
-            case R.anim.rotation_animation_jump_exit:
-                // These are the only cases that matter.
-                if (forceDefault) {
-                    return false;
-                }
-                final RotationAnimationPair anim = selectRotationAnimation();
-                return exitAnimId == anim.mExit && enterAnimId == anim.mEnter;
-            default:
-                return true;
-        }
     }
 
     void restoreSettings(int userRotationMode, int userRotation, int fixedToUserRotation) {
@@ -1271,7 +1207,10 @@ public class DisplayRotation {
 
         @Surface.Rotation
         final int preferredRotation;
-        if (!isDefaultDisplay) {
+// QTI_BEGIN: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
+
+        if (/* QTI_BEGIN */ !(overrideMirroring && isBuiltin) && /* QTI_END */ !isDefaultDisplay) {
+// QTI_END: 2024-05-10: Display: wm: Allow non-default displays to rotate with sensor
             // For secondary displays we ignore things like displays sensors, docking mode and
             // rotation lock, and always prefer user rotation.
             preferredRotation = mUserRotation;
@@ -1293,10 +1232,17 @@ public class DisplayRotation {
             // Ignore sensor when in desk dock unless explicitly enabled.
             // This case can enable 180 degree rotation while docked.
             preferredRotation = deskDockEnablesAccelerometer ? sensorRotation : mDeskDockRotation;
-        } else if (hdmiPlugged && mDemoHdmiRotationLock) {
+// QTI_BEGIN: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
+        } else if ((hdmiPlugged || mWifiDisplayConnected) && mDemoHdmiRotationLock) {
+// QTI_END: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
             // Ignore sensor when plugged into HDMI when demo HDMI rotation lock enabled.
             // Note that the dock orientation overrides the HDMI orientation.
             preferredRotation = mDemoHdmiRotation;
+// QTI_BEGIN: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
+        } else if (mWifiDisplayConnected && (mWifiDisplayRotation > -1)) {
+            // Ignore sensor when WFD is active and UIBC rotation is enabled
+            preferredRotation = mWifiDisplayRotation;
+// QTI_END: 2019-02-10: Video: wm::DisplayRotation: Changes for WFD and UIBC.
         } else if (hdmiPlugged && dockMode == Intent.EXTRA_DOCK_STATE_UNDOCKED
                 && mUndockedHdmiRotation >= 0) {
             // Ignore sensor when plugged into HDMI and an undocked orientation has
@@ -1773,6 +1719,9 @@ public class DisplayRotation {
         if (mFoldController != null) {
             synchronized (mLock) {
                 mFoldController.foldStateChanged(deviceState);
+                if (mDeviceStateAutoRotateSettingController != null) {
+                    mDeviceStateAutoRotateSettingController.onDeviceStateChange(deviceState);
+                }
             }
         }
     }

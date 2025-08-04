@@ -16,6 +16,9 @@
 
 package android.hardware.camera2.impl;
 
+// QTI_BEGIN: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+import static android.hardware.camera2.CameraAccessException.CAMERA_IN_USE;
+// QTI_END: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
 import static com.android.internal.util.function.pooled.PooledLambda.obtainRunnable;
 
 import android.annotation.FlaggedApi;
@@ -27,6 +30,10 @@ import android.compat.annotation.EnabledSince;
 import android.content.Context;
 import android.graphics.ImageFormat;
 import android.hardware.ICameraService;
+// QTI_BEGIN: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+import android.app.ActivityThread;
+import android.graphics.ImageFormat;
+// QTI_END: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -65,6 +72,10 @@ import android.os.Parcelable;
 import android.os.RemoteException;
 import android.os.ServiceSpecificException;
 import android.os.SystemClock;
+// QTI_BEGIN: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+import android.os.SystemProperties;
+import android.text.TextUtils;
+// QTI_END: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
@@ -110,6 +121,9 @@ public class CameraDeviceImpl extends CameraDevice
     };
 
     private static final int REQUEST_ID_NONE = -1;
+// QTI_BEGIN: 2018-06-19: Camera: Camera2: Notify fps as Session Based Parameter
+    private int customOpMode = 0;
+// QTI_END: 2018-06-19: Camera: Camera2: Notify fps as Session Based Parameter
 
     /**
      * Starting {@link Build.VERSION_CODES#VANILLA_ICE_CREAM},
@@ -194,6 +208,9 @@ public class CameraDeviceImpl extends CameraDevice
     private int mNextSessionId = 0;
 
     private final int mAppTargetSdkVersion;
+// QTI_BEGIN: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+    private boolean mIsPrivilegedApp = false;
+// QTI_END: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
 
     private ExecutorService mOfflineSwitchService;
     private CameraOfflineSessionImpl mOfflineSessionImpl;
@@ -449,6 +466,19 @@ public class CameraDeviceImpl extends CameraDevice
         } else {
             mTotalPartialCount = partialCount;
         }
+// QTI_BEGIN: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+        mIsPrivilegedApp = checkPrivilegedAppList();
+// QTI_END: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+    }
+
+    /**
+     * When camera device is opened in shared mode, call to check if this is a primary client.
+     *
+     */
+    public boolean isPrimaryClient() {
+        synchronized (mInterfaceLock) {
+            return mIsPrimaryClient;
+        }
     }
 
     private Map<String, CameraCharacteristics> getPhysicalIdToChars() {
@@ -482,8 +512,19 @@ public class CameraDeviceImpl extends CameraDevice
 
             mRemoteDevice = new ICameraDeviceUserWrapper(remoteDevice);
             Parcel resultParcel = Parcel.obtain();
-            mRemoteDevice.getCaptureResultMetadataQueue().writeToParcel(resultParcel, 0);
+
+            // Passing in PARCELABLE_WRITE_RETURN_VALUE closes the ParcelFileDescriptors
+            // owned by MQDescriptor returned by getCaptureResultMetadataQueue()
+            // Though these will be closed when GC runs, that may not happen for a while.
+            // Also, apps running with StrictMode would get warnings / crash in the case they're not
+            // explicitly closed.
+            mRemoteDevice.getCaptureResultMetadataQueue().writeToParcel(resultParcel,
+                    Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
             mFMQReader = nativeCreateFMQReader(resultParcel);
+            // Recycle since resultParcel would dup fds from MQDescriptor as well. We don't
+            // need them after the native FMQ reader has been created. That is since the native
+            // creates calls MQDescriptor.readFromParcel() which again dups the fds.
+            resultParcel.recycle();
 
             IBinder remoteDeviceBinder = remoteDevice.asBinder();
             // For legacy camera device, remoteDevice is in the same process, and
@@ -559,6 +600,12 @@ public class CameraDeviceImpl extends CameraDevice
         }
     }
 
+// QTI_BEGIN: 2018-06-19: Camera: Camera2: Notify fps as Session Based Parameter
+    public void setVendorStreamConfigMode(int fpsrange) {
+        customOpMode = fpsrange;
+    }
+
+// QTI_END: 2018-06-19: Camera: Camera2: Notify fps as Session Based Parameter
     @Override
     public String getId() {
         return mCameraId;
@@ -681,6 +728,9 @@ public class CameraDeviceImpl extends CameraDevice
                         mConfiguredOutputs.put(streamId, outConfig);
                     }
                 }
+// QTI_BEGIN: 2018-06-19: Camera: Camera2: Notify fps as Session Based Parameter
+                operatingMode = (operatingMode | (customOpMode << 16));
+// QTI_END: 2018-06-19: Camera: Camera2: Notify fps as Session Based Parameter
 
                 int offlineStreamIds[];
                 if (sessionParams != null) {
@@ -847,24 +897,19 @@ public class CameraDeviceImpl extends CameraDevice
         List<SharedOutputConfiguration> sharedConfigs =
                 sharedSessionConfiguration.getOutputStreamsInformation();
         for (SharedOutputConfiguration sharedConfig : sharedConfigs) {
-            if (outConfig.getConfiguredSize().equals(sharedConfig.getSize())
-                    && (outConfig.getConfiguredFormat() == sharedConfig.getFormat())
-                    && (outConfig.getSurfaceGroupId() == OutputConfiguration.SURFACE_GROUP_ID_NONE)
-                    && (outConfig.getSurfaceType() == sharedConfig.getSurfaceType())
+            if ((outConfig.getSurfaceGroupId() == OutputConfiguration.SURFACE_GROUP_ID_NONE)
                     && (outConfig.getMirrorMode() == sharedConfig.getMirrorMode())
-                    && (outConfig.getUsage() == sharedConfig.getUsage())
                     && (outConfig.isReadoutTimestampEnabled()
                     == sharedConfig.isReadoutTimestampEnabled())
                     && (outConfig.getTimestampBase() == sharedConfig.getTimestampBase())
                     && (outConfig.getStreamUseCase() == sharedConfig.getStreamUseCase())
-                    && (outConfig.getColorSpace().equals(
-                    sharedSessionConfiguration.getColorSpace()))
                     && (outConfig.getDynamicRangeProfile()
                     == DynamicRangeProfiles.STANDARD)
-                    && (outConfig.getConfiguredDataspace() == sharedConfig.getDataspace())
                     && (Objects.equals(outConfig.getPhysicalCameraId(),
                     sharedConfig.getPhysicalCameraId()))
                     && (outConfig.getSensorPixelModes().isEmpty())
+                    && (!outConfig.isMultiResolution())
+                    && (!outConfig.isDeferredConfiguration())
                     && (!outConfig.isShared())) {
                 //Found valid config, return true
                 return true;
@@ -896,14 +941,6 @@ public class CameraDeviceImpl extends CameraDevice
         if (config.getExecutor() == null) {
             throw new IllegalArgumentException("Invalid executor");
         }
-        if (mSharedMode) {
-            if (config.getSessionType() != SessionConfiguration.SESSION_SHARED) {
-                throw new IllegalArgumentException("Invalid session type");
-            }
-            if (!checkSharedSessionConfiguration(outputConfigs)) {
-                throw new IllegalArgumentException("Invalid output configurations");
-            }
-        }
         createCaptureSessionInternal(config.getInputConfiguration(), outputConfigs,
                 config.getStateCallback(), config.getExecutor(), config.getSessionType(),
                 config.getSessionParameters());
@@ -921,15 +958,24 @@ public class CameraDeviceImpl extends CameraDevice
 
             checkIfCameraClosedOrInError();
 
+            boolean isSharedSession = (operatingMode == ICameraDeviceUser.SHARED_MODE);
+            if (Flags.cameraMultiClient() && mSharedMode) {
+                if (!isSharedSession) {
+                    throw new IllegalArgumentException("Invalid session type");
+                }
+                if (!checkSharedSessionConfiguration(outputConfigurations)) {
+                    throw new IllegalArgumentException("Invalid output configurations");
+                }
+                if (inputConfig != null) {
+                    throw new IllegalArgumentException("Shared capture session doesn't support"
+                            + " input configuration yet.");
+                }
+            }
+
             boolean isConstrainedHighSpeed =
                     (operatingMode == ICameraDeviceUser.CONSTRAINED_HIGH_SPEED_MODE);
             if (isConstrainedHighSpeed && inputConfig != null) {
                 throw new IllegalArgumentException("Constrained high speed session doesn't support"
-                        + " input configuration yet.");
-            }
-            boolean isSharedSession = (operatingMode == ICameraDeviceUser.SHARED_MODE);
-            if (isSharedSession && inputConfig != null) {
-                throw new IllegalArgumentException("Shared capture session doesn't support"
                         + " input configuration yet.");
             }
 
@@ -993,8 +1039,7 @@ public class CameraDeviceImpl extends CameraDevice
                         mCharacteristics);
             } else if (isSharedSession) {
                 newSession = new CameraSharedCaptureSessionImpl(mNextSessionId++,
-                        callback, executor, this, mDeviceExecutor, configureSuccess,
-                        mIsPrimaryClient);
+                        callback, executor, this, mDeviceExecutor, configureSuccess);
             } else {
                 newSession = new CameraCaptureSessionImpl(mNextSessionId++, input,
                         callback, executor, this, mDeviceExecutor, configureSuccess);
@@ -1063,6 +1108,11 @@ public class CameraDeviceImpl extends CameraDevice
         synchronized(mInterfaceLock) {
             checkIfCameraClosedOrInError();
 
+            if (Flags.cameraMultiClient() && mSharedMode && !mIsPrimaryClient) {
+                throw new UnsupportedOperationException("In shared session mode,"
+                        + "only primary clients can create capture request.");
+            }
+
             for (String physicalId : physicalCameraIdSet) {
                 if (Objects.equals(physicalId, getId())) {
                     throw new IllegalStateException("Physical id matches the logical id!");
@@ -1089,6 +1139,11 @@ public class CameraDeviceImpl extends CameraDevice
         synchronized(mInterfaceLock) {
             checkIfCameraClosedOrInError();
 
+            if (Flags.cameraMultiClient() && mSharedMode && !mIsPrimaryClient) {
+                throw new UnsupportedOperationException("In shared session mode,"
+                        + "only primary clients can create capture request.");
+            }
+
             CameraMetadataNative templatedRequest = null;
 
             templatedRequest = mRemoteDevice.createDefaultRequest(templateType);
@@ -1108,6 +1163,10 @@ public class CameraDeviceImpl extends CameraDevice
             throws CameraAccessException {
         synchronized(mInterfaceLock) {
             checkIfCameraClosedOrInError();
+            if (Flags.cameraMultiClient() && mSharedMode) {
+                throw new UnsupportedOperationException("In shared session mode,"
+                        + "reprocess capture requests are not supported.");
+            }
 
             CameraMetadataNative resultMetadata = new
                     CameraMetadataNative(inputResult.getNativeCopy());
@@ -1561,6 +1620,80 @@ public class CameraDeviceImpl extends CameraDevice
         }
     }
 
+    public int startStreaming(List<Surface> surfaces, CaptureCallback callback,
+            Executor executor) throws CameraAccessException {
+        // Need a valid executor, or current thread needs to have a looper, if
+        // callback is valid
+        executor = checkExecutor(executor, callback);
+        synchronized (mInterfaceLock) {
+            checkIfCameraClosedOrInError();
+            for (Surface surface : surfaces) {
+                if (surface == null) {
+                    throw new IllegalArgumentException("Null Surface targets are not allowed");
+                }
+            }
+            // In shared session mode, if there are other active clients streaming then
+            // stoprepeating does not actually send request to HAL to cancel the request.
+            // Cameraservice will use this call to remove this client surfaces provided in its
+            // previous streaming request. If this is the only client for the shared camera device
+            // then camerservice will ask HAL to cancel the previous repeating request
+            stopRepeating();
+
+            // StartStreaming API does not allow capture parameters to be provided through a capture
+            // request. If the primary client has an existing repeating request, the camera service
+            // will either attach the provided surfaces to that request or create a default capture
+            // request if no repeating request is active. A default capture request is created here
+            // for initial use. The capture callback will provide capture results that include the
+            // actual capture parameters used for the streaming.
+            CameraMetadataNative templatedRequest = mRemoteDevice.createDefaultRequest(
+                    CameraDevice.TEMPLATE_PREVIEW);
+
+            CaptureRequest.Builder builder = new CaptureRequest.Builder(
+                    templatedRequest, /*reprocess*/false, CameraCaptureSession.SESSION_ID_NONE,
+                    getId(), /*physicalCameraIdSet*/ null);
+
+            for (Surface surface : surfaces) {
+                builder.addTarget(surface);
+            }
+            CaptureRequest request = builder.build();
+            request.convertSurfaceToStreamId(mConfiguredOutputs);
+
+            SubmitInfo requestInfo;
+            requestInfo = mRemoteDevice.startStreaming(request.getStreamIds(),
+                    request.getSurfaceIds());
+            request.recoverStreamIdToSurface();
+            List<CaptureRequest> requestList = new ArrayList<CaptureRequest>();
+            requestList.add(request);
+
+            if (callback != null) {
+                mCaptureCallbackMap.put(requestInfo.getRequestId(),
+                        new CaptureCallbackHolder(
+                            callback, requestList, executor, true, mNextSessionId - 1));
+            } else {
+                if (DEBUG) {
+                    Log.d(TAG, "Listen for request " + requestInfo.getRequestId() + " is null");
+                }
+            }
+
+            if (mRepeatingRequestId != REQUEST_ID_NONE) {
+                checkEarlyTriggerSequenceCompleteLocked(mRepeatingRequestId,
+                        requestInfo.getLastFrameNumber(), mRepeatingRequestTypes);
+            }
+
+            CaptureRequest[] requestArray = requestList.toArray(
+                    new CaptureRequest[requestList.size()]);
+            mRepeatingRequestId = requestInfo.getRequestId();
+            mRepeatingRequestTypes = getRequestTypes(requestArray);
+
+            if (mIdle) {
+                mDeviceExecutor.execute(mCallOnActive);
+            }
+            mIdle = false;
+
+            return requestInfo.getRequestId();
+        }
+    }
+
     public int setRepeatingRequest(CaptureRequest request, CaptureCallback callback,
             Executor executor) throws CameraAccessException {
         List<CaptureRequest> requestList = new ArrayList<CaptureRequest>();
@@ -1771,6 +1904,29 @@ public class CameraDeviceImpl extends CameraDevice
         return false;
     }
 
+// QTI_BEGIN: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+    private boolean checkPrivilegedAppList() {
+        String packageName = ActivityThread.currentOpPackageName();
+        String packageList = SystemProperties.get("persist.vendor.camera.privapp.list");
+
+        if (packageList.length() > 0) {
+            TextUtils.StringSplitter splitter = new TextUtils.SimpleStringSplitter(',');
+            splitter.setString(packageList);
+            for (String str : splitter) {
+                if (packageName.equals(str)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    public boolean isPrivilegedApp() {
+        return mIsPrivilegedApp;
+    }
+
+// QTI_END: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
     private void checkInputConfiguration(InputConfiguration inputConfig) {
         if (inputConfig == null) {
             return;
@@ -1813,6 +1969,16 @@ public class CameraDeviceImpl extends CameraDevice
                         inputConfig.getWidth() + "x" + inputConfig.getHeight() + " is not valid");
             }
         } else {
+// QTI_BEGIN: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
+            /*
+             * don't check input format and size,
+             * if the package name is in the white list
+             */
+            if (isPrivilegedApp()) {
+                Log.w(TAG, "ignore input format/size check for white listed app");
+                return;
+            }
+// QTI_END: 2018-03-10: Camera: Skip stream size check for whitelisted apps..
             if (!checkInputConfigurationWithStreamConfigurations(inputConfig, /*maxRes*/false) &&
                     !checkInputConfigurationWithStreamConfigurations(inputConfig, /*maxRes*/true)) {
                 throw new IllegalArgumentException("Input config with format " +
@@ -2883,6 +3049,11 @@ public class CameraDeviceImpl extends CameraDevice
     @Override
     public void createExtensionSession(ExtensionSessionConfiguration extensionConfiguration)
             throws CameraAccessException {
+        if (Flags.cameraMultiClient() && mSharedMode) {
+            throw new UnsupportedOperationException("In shared session mode,"
+                    + "extension sessions are not supported.");
+        }
+
         HashMap<String, CameraCharacteristics> characteristicsMap = new HashMap<>(
                 getPhysicalIdToChars());
         characteristicsMap.put(mCameraId, mCharacteristics);

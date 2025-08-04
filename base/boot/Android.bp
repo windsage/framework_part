@@ -147,6 +147,12 @@ custom_platform_bootclasspath {
             apex: "com.android.virt",
             module: "com.android.virt-bootclasspath-fragment",
         },
+        //T-HUB Core [SDD]: add decoupling framework by lijia.chen 20220506 start
+        {
+            apex: "com.transsion.thub.core",
+            module: "com.transsion.thub.core-bootclasspath-fragment",
+        },
+        //T-HUB Core [SDD]: add decoupling framework by lijia.chen 20220506 end
     ],
 
     soong_config_variables: {

@@ -55,12 +55,10 @@ public:
                                         const std::vector<LayerSettings>& layers,
                                         const std::shared_ptr<ExternalTexture>& buffer,
                                         base::unique_fd&& bufferFence) override;
-    ftl::Future<FenceResult> drawGainmap(const std::shared_ptr<ExternalTexture>& sdr,
-                                         base::borrowed_fd&& sdrFence,
-                                         const std::shared_ptr<ExternalTexture>& hdr,
-                                         base::borrowed_fd&& hdrFence, float hdrSdrRatio,
-                                         ui::Dataspace dataspace,
-                                         const std::shared_ptr<ExternalTexture>& gainmap) override;
+    ftl::Future<FenceResult> tonemapAndDrawGainmap(
+            const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
+            float hdrSdrRatio, ui::Dataspace dataspace, const std::shared_ptr<ExternalTexture>& sdr,
+            const std::shared_ptr<ExternalTexture>& gainmap) override;
 
     int getContextPriority() override;
     bool supportsBackgroundBlur() override;
@@ -68,6 +66,10 @@ public:
     std::optional<pid_t> getRenderEngineTid() const override;
     void setEnableTracing(bool tracingEnabled) override;
 
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
+    void setViewportAndProjection(Rect viewPort, Rect sourceCrop) override;
+
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 protected:
     void mapExternalTextureBuffer(const sp<GraphicBuffer>& buffer, bool isRenderable) override;
     void unmapExternalTextureBuffer(sp<GraphicBuffer>&& buffer) override;
@@ -77,13 +79,11 @@ protected:
                             const std::vector<LayerSettings>& layers,
                             const std::shared_ptr<ExternalTexture>& buffer,
                             base::unique_fd&& bufferFence) override;
-    void drawGainmapInternal(const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
-                             const std::shared_ptr<ExternalTexture>& sdr,
-                             base::borrowed_fd&& sdrFence,
-                             const std::shared_ptr<ExternalTexture>& hdr,
-                             base::borrowed_fd&& hdrFence, float hdrSdrRatio,
-                             ui::Dataspace dataspace,
-                             const std::shared_ptr<ExternalTexture>& gainmap) override;
+    void tonemapAndDrawGainmapInternal(
+            const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
+            const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
+            float hdrSdrRatio, ui::Dataspace dataspace, const std::shared_ptr<ExternalTexture>& sdr,
+            const std::shared_ptr<ExternalTexture>& gainmap) override;
 
 private:
     void threadMain(CreateInstanceFactory factory);

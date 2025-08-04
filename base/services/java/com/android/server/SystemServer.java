@@ -72,6 +72,9 @@ import android.os.FileUtils;
 import android.os.IBinder;
 import android.os.IBinderCallback;
 import android.os.IIncidentManager;
+// QTI_BEGIN: 2018-02-17: Wigig: frameworks/base: Add WiGig support
+import android.os.IBinder;
+// QTI_END: 2018-02-17: Wigig: frameworks/base: Add WiGig support
 import android.os.Looper;
 import android.os.Message;
 import android.os.Parcel;
@@ -91,6 +94,7 @@ import android.server.ServerProtoEnums;
 import android.system.ErrnoException;
 import android.system.Os;
 import android.text.TextUtils;
+import android.tracing.perfetto.InitArguments;
 import android.util.ArrayMap;
 import android.util.DisplayMetrics;
 import android.util.Dumpable;
@@ -109,6 +113,7 @@ import com.android.internal.notification.SystemNotificationChannels;
 import com.android.internal.os.ApplicationSharedMemory;
 import com.android.internal.os.BinderInternal;
 import com.android.internal.os.RuntimeInit;
+import com.android.internal.os.logging.MetricsLoggerWrapper;
 import com.android.internal.pm.RoSystemFeatures;
 import com.android.internal.policy.AttributeCache;
 import com.android.internal.protolog.ProtoLog;
@@ -307,6 +312,11 @@ import com.android.server.wm.WindowManagerGlobalLock;
 import com.android.server.wm.WindowManagerService;
 
 import dalvik.system.VMRuntime;
+// QTI_BEGIN: 2018-02-17: Wigig: frameworks/base: Add WiGig support
+import dalvik.system.PathClassLoader;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+// QTI_END: 2018-02-17: Wigig: frameworks/base: Add WiGig support
 
 import java.io.File;
 import java.io.FileDescriptor;
@@ -323,6 +333,9 @@ import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 
+//T-HUB core[SDD]: add by xiang.gao 20230329 start
+import com.transsion.hubcore.server.ITranSystemServer;
+//T-HUB core[SDD]: add by xiang.gao 20230329 end
 /**
  * Entry point to {@code system_server}.
  */
@@ -365,6 +378,8 @@ public final class SystemServer implements Dumpable {
             "com.android.clockwork.time.WearTimeService";
     private static final String WEAR_SETTINGS_SERVICE_CLASS =
             "com.android.clockwork.settings.WearSettingsService";
+    private static final String WEAR_GESTURE_SERVICE_CLASS =
+            "com.android.clockwork.gesture.WearGestureService";
     private static final String WRIST_ORIENTATION_SERVICE_CLASS =
             "com.android.clockwork.wristorientation.WristOrientationService";
     private static final String IOT_SERVICE_CLASS =
@@ -389,6 +404,8 @@ public final class SystemServer implements Dumpable {
             "com.android.ecm.EnhancedConfirmationService";
     private static final String SAFETY_CENTER_SERVICE_CLASS =
             "com.android.safetycenter.SafetyCenterService";
+    private static final String BLUETOOTH_SERVICE_CLASS =
+            "com.android.server.bluetooth.BluetoothService";
     private static final String SDK_SANDBOX_MANAGER_SERVICE_CLASS =
             "com.android.server.sdksandbox.SdkSandboxManagerService$Lifecycle";
     private static final String AD_SERVICES_MANAGER_SERVICE_CLASS =
@@ -441,8 +458,6 @@ public final class SystemServer implements Dumpable {
     private static final String UWB_SERVICE_CLASS = "com.android.server.uwb.UwbService";
     private static final String BLUETOOTH_APEX_SERVICE_JAR_PATH =
             "/apex/com.android.bt/javalib/service-bluetooth.jar";
-    private static final String BLUETOOTH_SERVICE_CLASS =
-            "com.android.server.bluetooth.BluetoothService";
     private static final String DEVICE_LOCK_SERVICE_CLASS =
             "com.android.server.devicelock.DeviceLockService";
     private static final String DEVICE_LOCK_APEX_PATH =
@@ -792,6 +807,12 @@ public final class SystemServer implements Dumpable {
     private void run() {
         TimingsTraceAndSlog t = new TimingsTraceAndSlog();
         try {
+            if (android.tracing.Flags.systemServerLargePerfettoShmemBuffer()) {
+                // Explicitly initialize a 4 MB shmem buffer for Perfetto producers (b/382369925)
+                android.tracing.perfetto.Producer.init(new InitArguments(
+                        InitArguments.PERFETTO_BACKEND_SYSTEM, 4 * 1024));
+            }
+
             t.traceBegin("InitBeforeStartServices");
 
             // Record the process start information in sys props.
@@ -931,6 +952,10 @@ public final class SystemServer implements Dumpable {
 
             LocalServices.addService(SystemServiceManager.class, mSystemServiceManager);
 
+            //T-HUB core[OS]: add by zijiang.wang 20200509 start
+            ITranSystemServer.Instance().onSystemServiceManagerCreated(this);
+            //T-HUB core[OS]: add by zijiang.wang 20200509 end
+
             // Lazily load the pre-installed system font map in SystemServer only if we're not doing
             // the optimized font loading in the FontManagerService.
             if (!com.android.text.flags.Flags.useOptimizedBoottimeFontLoading()
@@ -1010,6 +1035,17 @@ public final class SystemServer implements Dumpable {
                 mActivityManagerService.frozenBinderTransactionDetected(pid, code, flags, err);
             }
         });
+
+        // Register callback to report native memory metrics post GC cleanup
+        // for system_server
+        if (android.app.Flags.reportPostgcMemoryMetrics() &&
+            com.android.libcore.readonly.Flags.postCleanupApis()) {
+            VMRuntime.addPostCleanupCallback(new Runnable() {
+                @Override public void run() {
+                    MetricsLoggerWrapper.logPostGcMemorySnapshot();
+                }
+            });
+        }
 
         // Loop forever.
         Looper.loop();
@@ -1261,12 +1297,6 @@ public final class SystemServer implements Dumpable {
         if (!Flags.refactorCrashrecovery()) {
             // Initialize RescueParty.
             CrashRecoveryAdaptor.rescuePartyRegisterHealthObserver(mSystemContext);
-            if (!Flags.recoverabilityDetection()) {
-                // Now that we have the bare essentials of the OS up and running, take
-                // note that we just booted, which might send out a rescue party if
-                // we're stuck in a runtime restart loop.
-                CrashRecoveryAdaptor.packageWatchdogNoteBoot(mSystemContext);
-            }
         }
 
 
@@ -1280,6 +1310,21 @@ public final class SystemServer implements Dumpable {
         if (SystemProperties.getBoolean("config.enable_display_offload", false)) {
             mSystemServiceManager.startService(WEAR_DISPLAYOFFLOAD_SERVICE_CLASS);
         }
+// QTI_BEGIN: 2024-11-22: Wearables: Adding QTI display offload service
+        // start the OffloadManagerService
+        if (SystemProperties.getBoolean("config.enable_qti_display_offload", false)) {
+            mSystemServiceManager.startService("com.qualcomm.qti.server.offloadservice.OffloadManagerService");
+        }
+// QTI_END: 2024-11-22: Wearables: Adding QTI display offload service
+        t.traceEnd();
+
+// QTI_BEGIN: 2024-11-27: Wearables: Adding QTI suspend manager service
+        // Start the suspend manager
+        t.traceBegin("StartSuspendManagerService");
+        if (SystemProperties.getBoolean("config.enable_qti_suspend_manager", false)) {
+            mSystemServiceManager.startService("com.qualcomm.qti.server.suspendservice.SuspendManagerService");
+        }
+// QTI_END: 2024-11-27: Wearables: Adding QTI suspend manager service
         t.traceEnd();
 
         // Display manager is needed to provide display metrics before package manager
@@ -1516,6 +1561,10 @@ public final class SystemServer implements Dumpable {
         MmsServiceBroker mmsService = null;
         HardwarePropertiesManagerService hardwarePropertiesService = null;
         PacProxyService pacProxyService = null;
+// QTI_BEGIN: 2018-02-17: Wigig: frameworks/base: Add WiGig support
+        Object wigigP2pService = null;
+        Object wigigService = null;
+// QTI_END: 2018-02-17: Wigig: frameworks/base: Add WiGig support
 
         boolean disableSystemTextClassifier = SystemProperties.getBoolean(
                 "config.disable_systemtextclassifier", false);
@@ -1524,6 +1573,12 @@ public final class SystemServer implements Dumpable {
                 false);
         boolean disableCameraService = SystemProperties.getBoolean("config.disable_cameraservice",
                 false);
+
+// QTI_BEGIN: 2018-02-17: Wigig: frameworks/base: Add WiGig support
+        boolean enableWigig = SystemProperties.getBoolean("persist.vendor.wigig.enable", false);
+// QTI_END: 2018-02-17: Wigig: frameworks/base: Add WiGig support
+
+        boolean isDesktop = context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_PC);
 
         boolean isWatch = RoSystemFeatures.hasFeatureWatch(context);
 
@@ -1537,14 +1592,6 @@ public final class SystemServer implements Dumpable {
 
         boolean enableVrService = context.getPackageManager().hasSystemFeature(
                 PackageManager.FEATURE_VR_MODE_HIGH_PERFORMANCE);
-
-        if (!Flags.recoverabilityDetection()) {
-            // For debugging RescueParty
-            if (Build.IS_DEBUGGABLE
-                    && SystemProperties.getBoolean("debug.crash_system", false)) {
-                throw new RuntimeException();
-            }
-        }
 
         try {
             final String SECONDARY_ZYGOTE_PRELOAD = "SecondaryZygotePreload";
@@ -1654,7 +1701,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (!isTv) {
+            if (!isTv && !isDesktop) {
                 t.traceBegin("StartVibratorManagerService");
                 mSystemServiceManager.startService(VibratorManagerService.Lifecycle.class);
                 t.traceEnd();
@@ -1758,8 +1805,10 @@ public final class SystemServer implements Dumpable {
                 Slog.i(TAG, "No Bluetooth Service (Bluetooth Hardware Not Present)");
             } else {
                 t.traceBegin("StartBluetoothService");
+// QTI_BEGIN: 2023-10-19: Bluetooth: Enable AOSP BT APEX
                 mSystemServiceManager.startServiceFromJar(BLUETOOTH_SERVICE_CLASS,
                     BLUETOOTH_APEX_SERVICE_JAR_PATH);
+// QTI_END: 2023-10-19: Bluetooth: Enable AOSP BT APEX
                 t.traceEnd();
             }
 
@@ -1775,6 +1824,10 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(PinnerService.class);
             t.traceEnd();
 
+// QTI_BEGIN: 2019-11-13: Core: Add mechanism to improve consistancy of notification
+            mSystemServiceManager.startService(ActivityTriggerService.class);
+
+// QTI_END: 2019-11-13: Core: Add mechanism to improve consistancy of notification
             if (Build.IS_DEBUGGABLE && ProfcollectForwardingService.enabled()) {
                 t.traceBegin("ProfcollectForwardingService");
                 mSystemServiceManager.startService(ProfcollectForwardingService.class);
@@ -1785,15 +1838,17 @@ public final class SystemServer implements Dumpable {
             SignedConfigService.registerUpdateReceiver(mSystemContext);
             t.traceEnd();
 
-            t.traceBegin("AppIntegrityService");
-            mSystemServiceManager.startService(AppIntegrityManagerService.class);
-            t.traceEnd();
+            if (!android.server.Flags.removeAppIntegrityManagerService()) {
+                t.traceBegin("AppIntegrityService");
+                mSystemServiceManager.startService(AppIntegrityManagerService.class);
+                t.traceEnd();
+            }
 
             t.traceBegin("StartLogcatManager");
             mSystemServiceManager.startService(LogcatManagerService.class);
             t.traceEnd();
 
-            if (!isWatch && !isTv && !isAutomotive
+            if (!isWatch && !isTv && !isAutomotive && !isDesktop
                     && android.security.Flags.aflApi()) {
                 t.traceBegin("StartIntrusionDetectionService");
                 mSystemServiceManager.startService(IntrusionDetectionService.class);
@@ -1806,7 +1861,7 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (!isWatch && !isTv && !isAutomotive
+            if (!isWatch && !isTv && !isAutomotive && !isDesktop
                     && android.security.Flags.aapmApi()) {
                 t.traceBegin("StartAdvancedProtectionService");
                 mSystemServiceManager.startService(AdvancedProtectionService.Lifecycle.class);
@@ -2172,13 +2227,14 @@ public final class SystemServer implements Dumpable {
                 mSystemServiceManager.startServiceFromJar(
                         WIFI_SCANNING_SERVICE_CLASS, WIFI_APEX_SERVICE_JAR_PATH);
                 t.traceEnd();
-                // Start USD service
-                if (android.net.wifi.flags.Flags.usd()) {
-                    t.traceBegin("StartUsd");
-                    mSystemServiceManager.startServiceFromJar(
-                            WIFI_USD_SERVICE_CLASS, WIFI_APEX_SERVICE_JAR_PATH);
-                    t.traceEnd();
-                }
+            }
+
+            if (android.net.wifi.flags.Flags.usd() && context.getResources().getBoolean(
+                    com.android.internal.R.bool.config_deviceSupportsWifiUsd)) {
+                t.traceBegin("StartWifiUsd");
+                mSystemServiceManager.startServiceFromJar(WIFI_USD_SERVICE_CLASS,
+                        WIFI_APEX_SERVICE_JAR_PATH);
+                t.traceEnd();
             }
 
             if (context.getPackageManager().hasSystemFeature(
@@ -2276,6 +2332,42 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
+// QTI_BEGIN: 2019-03-26: WIGIG: frameworks/base: fix wigig service initialization
+            if (enableWigig) {
+                try {
+                    Slog.i(TAG, "Wigig Service");
+                    String wigigClassPath =
+// QTI_END: 2019-03-26: WIGIG: frameworks/base: fix wigig service initialization
+// QTI_BEGIN: 2020-02-12: WIGIG: Update wigig-service path
+                        "/system/system_ext/framework/wigig-service.jar" + ":" +
+// QTI_END: 2020-02-12: WIGIG: Update wigig-service path
+// QTI_BEGIN: 2020-01-20: WIGIG: Service: Update path location for Wigig service binaries
+                        "/system/system_ext/framework/vendor.qti.hardware.wigig.supptunnel-V1.0-java.jar" + ":" +
+                        "/system/system_ext/framework/vendor.qti.hardware.wigig.netperftuner-V1.0-java.jar" + ":" +
+                        "/system/system_ext/framework/vendor.qti.hardware.capabilityconfigstore-V1.0-java.jar";
+// QTI_END: 2020-01-20: WIGIG: Service: Update path location for Wigig service binaries
+// QTI_BEGIN: 2019-03-26: WIGIG: frameworks/base: fix wigig service initialization
+                    PathClassLoader wigigClassLoader =
+                            new PathClassLoader(wigigClassPath, getClass().getClassLoader());
+                    Class wigigP2pClass = wigigClassLoader.loadClass(
+                        "com.qualcomm.qti.server.wigig.p2p.WigigP2pServiceImpl");
+                    Constructor<Class> ctor = wigigP2pClass.getConstructor(Context.class);
+                    wigigP2pService = ctor.newInstance(context);
+                    Slog.i(TAG, "Successfully loaded WigigP2pServiceImpl class");
+                    ServiceManager.addService("wigigp2p", (IBinder) wigigP2pService);
+
+                    Class wigigClass = wigigClassLoader.loadClass(
+                        "com.qualcomm.qti.server.wigig.WigigService");
+                    ctor = wigigClass.getConstructor(Context.class);
+                    wigigService = ctor.newInstance(context);
+                    Slog.i(TAG, "Successfully loaded WigigService class");
+                    ServiceManager.addService("wigig", (IBinder) wigigService);
+                } catch (Throwable e) {
+                    reportWtf("starting WigigService", e);
+                }
+            }
+
+// QTI_END: 2019-03-26: WIGIG: frameworks/base: fix wigig service initialization
             t.traceBegin("StartSystemUpdateManagerService");
             try {
                 ServiceManager.addService(Context.SYSTEM_UPDATE_SERVICE,
@@ -2419,7 +2511,13 @@ public final class SystemServer implements Dumpable {
 
             if (isWatch) {
                 t.traceBegin("StartThermalObserver");
-                mSystemServiceManager.startService(THERMAL_OBSERVER_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+                try {
+                    mSystemServiceManager.startService(THERMAL_OBSERVER_CLASS);
+                } catch (Throwable e) {
+                    reportWtf("starting StartThermalObserver", e);
+                }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
                 t.traceEnd();
             }
 
@@ -2717,16 +2815,18 @@ public final class SystemServer implements Dumpable {
             mSystemServiceManager.startService(AuthService.class);
             t.traceEnd();
 
-            if (android.security.Flags.secureLockdown()) {
-                t.traceBegin("StartSecureLockDeviceService.Lifecycle");
-                mSystemServiceManager.startService(SecureLockDeviceService.Lifecycle.class);
-                t.traceEnd();
-            }
+            if (!isWatch && !isTv && !isAutomotive) {
+                if (android.security.Flags.secureLockdown()) {
+                    t.traceBegin("StartSecureLockDeviceService.Lifecycle");
+                    mSystemServiceManager.startService(SecureLockDeviceService.Lifecycle.class);
+                    t.traceEnd();
+                }
 
-            if (android.adaptiveauth.Flags.enableAdaptiveAuth()) {
-                t.traceBegin("StartAuthenticationPolicyService");
-                mSystemServiceManager.startService(AuthenticationPolicyService.class);
-                t.traceEnd();
+                if (android.adaptiveauth.Flags.enableAdaptiveAuth()) {
+                    t.traceBegin("StartAuthenticationPolicyService");
+                    mSystemServiceManager.startService(AuthenticationPolicyService.class);
+                    t.traceEnd();
+                }
             }
 
             if (!isWatch) {
@@ -2796,41 +2896,95 @@ public final class SystemServer implements Dumpable {
         if (isWatch) {
             // Must be started before services that depend it, e.g. WearConnectivityService
             t.traceBegin("StartWearPowerService");
-            mSystemServiceManager.startService(WEAR_POWER_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+            try {
+                mSystemServiceManager.startService(WEAR_POWER_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting StartWearPowerService", e);
+            }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
             t.traceEnd();
 
             t.traceBegin("StartHealthService");
-            mSystemServiceManager.startService(HEALTH_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+            try {
+                mSystemServiceManager.startService(HEALTH_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting StartHealthService", e);
+            }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
             t.traceEnd();
 
             t.traceBegin("StartSystemStateDisplayService");
-            mSystemServiceManager.startService(SYSTEM_STATE_DISPLAY_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+            try {
+                mSystemServiceManager.startService(SYSTEM_STATE_DISPLAY_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting StartSystemStateDisplayService", e);
+            }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
             t.traceEnd();
 
             t.traceBegin("StartWearConnectivityService");
-            mSystemServiceManager.startService(WEAR_CONNECTIVITY_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+            try {
+                mSystemServiceManager.startService(WEAR_CONNECTIVITY_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting StartWearConnectivityService", e);
+            }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
             t.traceEnd();
 
             t.traceBegin("StartWearDisplayService");
-            mSystemServiceManager.startService(WEAR_DISPLAY_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+            try {
+                mSystemServiceManager.startService(WEAR_DISPLAY_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting StartWearDisplayService", e);
+            }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
             t.traceEnd();
 
             if (Build.IS_DEBUGGABLE) {
                 t.traceBegin("StartWearDebugService");
-                mSystemServiceManager.startService(WEAR_DEBUG_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+                try {
+                    mSystemServiceManager.startService(WEAR_DEBUG_SERVICE_CLASS);
+                } catch (Throwable e) {
+                    reportWtf("starting StartWearDebugService", e);
+                }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
                 t.traceEnd();
             }
 
             t.traceBegin("StartWearTimeService");
-            mSystemServiceManager.startService(WEAR_TIME_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+            try {
+                mSystemServiceManager.startService(WEAR_TIME_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting StartWearTimeService", e);
+            }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
             t.traceEnd();
 
             t.traceBegin("StartWearSettingsService");
-            mSystemServiceManager.startService(WEAR_SETTINGS_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+            try {
+                mSystemServiceManager.startService(WEAR_SETTINGS_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting StartWearSettingsService", e);
+            }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
             t.traceEnd();
 
             t.traceBegin("StartWearModeService");
-            mSystemServiceManager.startService(WEAR_MODE_SERVICE_CLASS);
+// QTI_BEGIN: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
+            try {
+                mSystemServiceManager.startService(WEAR_MODE_SERVICE_CLASS);
+            } catch (Throwable e) {
+                reportWtf("starting StartWearModeService", e);
+            }
+// QTI_END: 2024-11-24: Wearables: Adding try-catch block for wearOS specific service
             t.traceEnd();
 
             boolean enableWristOrientationService =
@@ -2839,6 +2993,13 @@ public final class SystemServer implements Dumpable {
             if (enableWristOrientationService) {
                 t.traceBegin("StartWristOrientationService");
                 mSystemServiceManager.startService(WRIST_ORIENTATION_SERVICE_CLASS);
+                t.traceEnd();
+            }
+
+            if (android.server.Flags.wearGestureApi()
+                    && SystemProperties.getBoolean("config.enable_gesture_api", false)) {
+                t.traceBegin("StartWearGestureService");
+                mSystemServiceManager.startService(WEAR_GESTURE_SERVICE_CLASS);
                 t.traceEnd();
             }
         }
@@ -3018,6 +3179,27 @@ public final class SystemServer implements Dumpable {
         mSystemServiceManager.startBootPhase(t, SystemService.PHASE_SYSTEM_SERVICES_READY);
         t.traceEnd();
 
+// QTI_BEGIN: 2018-02-17: Wigig: frameworks/base: Add WiGig support
+        // Wigig services are not registered as system services because of class loader
+        // limitations, send boot phase notification separately
+        if (enableWigig) {
+            try {
+                Slog.i(TAG, "calling onBootPhase for Wigig Services");
+                Class wigigP2pClass = wigigP2pService.getClass();
+                Method m = wigigP2pClass.getMethod("onBootPhase", int.class);
+                m.invoke(wigigP2pService, new Integer(
+                    SystemService.PHASE_SYSTEM_SERVICES_READY));
+
+                Class wigigClass = wigigService.getClass();
+                m = wigigClass.getMethod("onBootPhase", int.class);
+                m.invoke(wigigService, new Integer(
+                    SystemService.PHASE_SYSTEM_SERVICES_READY));
+            } catch (Throwable e) {
+                reportWtf("Wigig services ready", e);
+            }
+        }
+
+// QTI_END: 2018-02-17: Wigig: frameworks/base: Add WiGig support
         t.traceBegin("MakeWindowManagerServiceReady");
         try {
             wm.systemReady();
@@ -3074,13 +3256,11 @@ public final class SystemServer implements Dumpable {
             CrashRecoveryAdaptor.initializeCrashrecoveryModuleService(mSystemServiceManager);
             t.traceEnd();
         } else {
-            if (Flags.recoverabilityDetection()) {
-                // Now that we have the essential services needed for mitigations, register the boot
-                // with package watchdog.
-                // Note that we just booted, which might send out a rescue party if we're stuck in a
-                // runtime restart loop.
-                CrashRecoveryAdaptor.packageWatchdogNoteBoot(mSystemContext);
-            }
+            // Now that we have the essential services needed for mitigations, register the boot
+            // with package watchdog.
+            // Note that we just booted, which might send out a rescue party if we're stuck in a
+            // runtime restart loop.
+            CrashRecoveryAdaptor.packageWatchdogNoteBoot(mSystemContext);
         }
 
         t.traceBegin("MakeDisplayManagerServiceReady");
@@ -3494,12 +3674,10 @@ public final class SystemServer implements Dumpable {
      * are updated outside of OTA; and to avoid breaking dependencies from system into apexes.
      */
     private void startApexServices(@NonNull TimingsTraceAndSlog t) {
-        if (Flags.recoverabilityDetection()) {
-            // For debugging RescueParty
-            if (Build.IS_DEBUGGABLE
-                    && SystemProperties.getBoolean("debug.crash_system", false)) {
-                throw new RuntimeException();
-            }
+        // For debugging RescueParty
+        if (Build.IS_DEBUGGABLE
+                && SystemProperties.getBoolean("debug.crash_system", false)) {
+            throw new RuntimeException();
         }
 
         t.traceBegin("startApexServices");

@@ -58,6 +58,9 @@ filegroup {
         "mapper/TouchCursorInputMapperCommon.cpp",
         "mapper/TouchInputMapper.cpp",
         "mapper/TouchpadInputMapper.cpp",
+        // add for perflock touch boost by chao.xu5 at Jul 15th, 2025 start.
+        "mapper/TouchPerformanceBoost.cpp",
+        // add for perflock touch boost by chao.xu5 at Jul 15th, 2025 end.
         "mapper/VibratorInputMapper.cpp",
         "mapper/accumulator/CursorButtonAccumulator.cpp",
         "mapper/accumulator/CursorScrollAccumulator.cpp",
@@ -66,9 +69,10 @@ filegroup {
         "mapper/accumulator/SingleTouchMotionAccumulator.cpp",
         "mapper/accumulator/TouchButtonAccumulator.cpp",
         "mapper/gestures/GestureConverter.cpp",
-        "mapper/gestures/GesturesLogging.cpp",
+        "mapper/gestures/GesturesLogcatAdapter.cpp",
         "mapper/gestures/HardwareProperties.cpp",
         "mapper/gestures/HardwareStateConverter.cpp",
+        "mapper/gestures/Logging.cpp",
         "mapper/gestures/PropertyProvider.cpp",
         "mapper/gestures/TimerProvider.cpp",
     ],
@@ -79,25 +83,25 @@ cc_defaults {
     srcs: [":libinputreader_sources"],
     shared_libs: [
         "android.companion.virtualdevice.flags-aconfig-cc",
+        "libPlatformProperties",
         "libbase",
         "libcap",
         "libcrypto",
         "libcutils",
-        "libjsoncpp",
         "libinput",
+        "libjsoncpp",
         "liblog",
-        "libPlatformProperties",
         "libstatslog",
         "libstatspull",
-        "libutils",
         "libstatssocket",
+        "libutils",
     ],
     static_libs: [
         "libchrome-gestures",
-        "libui-types",
         "libexpresslog",
-        "libtextclassifier_hash_static",
         "libstatslog_express",
+        "libtextclassifier_hash_static",
+        "libui-types",
     ],
     header_libs: [
         "libbatteryservice_headers",
@@ -108,6 +112,14 @@ cc_defaults {
         host: {
             static_libs: [
                 "libbinder",
+            ],
+        },
+        android: {
+            shared_libs: [
+                "libqti-perfd-client_system",
+            ],
+            header_libs: [
+                "perf_mpctl_client_system_headers",
             ],
         },
     },

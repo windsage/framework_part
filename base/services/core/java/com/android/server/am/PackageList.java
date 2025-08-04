@@ -33,7 +33,7 @@ import java.util.function.Function;
 /**
  * List of packages running in the process, self locked.
  */
-final class PackageList {
+public final class PackageList {
     private final ProcessRecord mProcess;
 
     private final ArrayMap<String, ProcessStats.ProcessStateHolder> mPkgList = new ArrayMap<>();

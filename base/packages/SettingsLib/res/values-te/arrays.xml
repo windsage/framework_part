@@ -75,16 +75,26 @@
     <item msgid="1051534112762023603">"పూర్తిగా తీసివేయండి"</item>
   </string-array>
   <string-array name="bluetooth_avrcp_versions">
-    <item msgid="6603880723315236832">"AVRCP 1.4 (ఆటోమేటిక్ సెట్టింగ్)"</item>
+<!-- QTI_BEGIN: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+<!-- QTI_END: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+    <item msgid="6603880723315236832">"AVRCP 1.6 (ఆటోమేటిక్ సెట్టింగ్)"</item>
     <item msgid="1637054408779685086">"AVRCP 1.3"</item>
-    <item msgid="5896162189744596291">"AVRCP 1.3"</item>
-    <item msgid="7556896992111771426">"AVRCP 1.6"</item>
+<!-- QTI_BEGIN: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+<!-- QTI_END: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+    <item msgid="5896162189744596291">"AVRCP 1.4"</item>
+<!-- QTI_BEGIN: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+<!-- QTI_END: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+    <item msgid="7556896992111771426">"AVRCP 1.5"</item>
   </string-array>
   <string-array name="bluetooth_avrcp_version_values">
-    <item msgid="4041937689950033942">"avrcp15"</item>
+<!-- QTI_BEGIN: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+<!-- QTI_END: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+    <item msgid="4041937689950033942">"avrcp16"</item>
     <item msgid="1613629084012791988">"avrcp13"</item>
     <item msgid="99467845610592181">"avrcp14"</item>
-    <item msgid="1963366694959681026">"avrcp16"</item>
+<!-- QTI_BEGIN: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+<!-- QTI_END: 2024-07-16: Bluetooth: BT: Default AVRCP TG version as v1.6 in Dev Options (2/2)-->
+    <item msgid="1963366694959681026">"avrcp15"</item>
   </string-array>
   <string-array name="bluetooth_map_versions">
     <item msgid="8786402640610987099">"MAP 1.2 (ఆటోమేటిక్)"</item>
@@ -105,6 +115,12 @@
     <item msgid="3825367753087348007">"LDAC"</item>
     <item msgid="328951785723550863">"LC3"</item>
     <item msgid="506175145534048710">"Opus"</item>
+<!-- QTI_BEGIN: 2023-04-05: Android_UI: SettingsLib: fix ArrayIndexOutOfBoundsException-->
+<!-- QTI_END: 2023-04-05: Android_UI: SettingsLib: fix ArrayIndexOutOfBoundsException-->
+    <item msgid="8711430979086781450">"<xliff:g id="QUALCOMM">Qualcomm®</xliff:g> <xliff:g id="APTX_ADAPTIVE">aptX™ Adaptive</xliff:g> ఆడియో"</item>
+<!-- QTI_BEGIN: 2023-04-05: Android_UI: SettingsLib: fix ArrayIndexOutOfBoundsException-->
+<!-- QTI_END: 2023-04-05: Android_UI: SettingsLib: fix ArrayIndexOutOfBoundsException-->
+    <item msgid="6486050771049225">"<xliff:g id="QUALCOMM">Qualcomm®</xliff:g> <xliff:g id="APTX_TWSP">aptX™ TWS+</xliff:g> ఆడియో"</item>
   </string-array>
   <string-array name="bluetooth_a2dp_codec_summaries">
     <item msgid="8868109554557331312">"సిస్టమ్ ఎంపికను ఉపయోగించండి (ఆటోమేటిక్)"</item>
@@ -115,6 +131,12 @@
     <item msgid="2553206901068987657">"LDAC"</item>
     <item msgid="3940992993241040716">"LC3"</item>
     <item msgid="7940970833006181407">"Opus"</item>
+<!-- QTI_BEGIN: 2023-04-05: Android_UI: SettingsLib: fix ArrayIndexOutOfBoundsException-->
+<!-- QTI_END: 2023-04-05: Android_UI: SettingsLib: fix ArrayIndexOutOfBoundsException-->
+    <item msgid="102988075927343894">"<xliff:g id="QUALCOMM">Qualcomm®</xliff:g> <xliff:g id="APTX_ADAPTIVE">aptX™ Adaptive</xliff:g> ఆడియో"</item>
+<!-- QTI_BEGIN: 2023-04-05: Android_UI: SettingsLib: fix ArrayIndexOutOfBoundsException-->
+<!-- QTI_END: 2023-04-05: Android_UI: SettingsLib: fix ArrayIndexOutOfBoundsException-->
+    <item msgid="6486050771049481">"<xliff:g id="QUALCOMM">Qualcomm®</xliff:g> <xliff:g id="APTX_TWSP">aptX™ TWS+</xliff:g> ఆడియో"</item>
   </string-array>
   <string-array name="bluetooth_a2dp_codec_sample_rate_titles">
     <item msgid="926809261293414607">"సిస్టమ్ ఎంపికను ఉపయోగించండి (ఆటోమేటిక్)"</item>
@@ -287,5 +309,23 @@
     <item msgid="2646486108212979598">"1"</item>
     <item msgid="3753634915787796632">"2"</item>
     <item msgid="4779928470672877922">"3"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_entries">
+    <item msgid="816770658383209617">"పరికర డిస్‌ప్లేలో మాత్రమే (ఆటోమేటిక్ సెట్టింగ్)"</item>
+    <item msgid="9161645858025071955">"ఎక్స్‌టర్నల్ డిస్‌ప్లే"</item>
+    <item msgid="23651860565814477">"తాకి ఉపయోగించగల లేటెస్ట్ స్టేటస్ బార్"</item>
+    <item msgid="7521112827893653392">"యాక్టివ్‌గా ఉన్నవి"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_summaries">
+    <item msgid="2964753205732912921">"షేడ్‌ను పరికర డిస్‌ప్లేలో మాత్రమే చూపండి"</item>
+    <item msgid="1955398604822147783">"ఒక ఎక్స్‌టర్నల్ డిస్‌ప్లేలో షేడ్‌ను చూపండి"</item>
+    <item msgid="391477482416751568">"స్టేటస్ బార్‌తో చివరిగా ఇంటరాక్ట్ అయిన షేడ్‌ను డిస్‌ప్లేలో చూపండి"</item>
+    <item msgid="1746820128097981528">"చివరగా యాక్టివ్‌గా ఉన్న డిస్‌ప్లేలో షేడ్‌ను చూపండి"</item>
+  </string-array>
+  <string-array name="shade_display_awareness_values">
+    <item msgid="3055776101992426514">"default_display"</item>
+    <item msgid="774789415968826925">"any_external_display"</item>
+    <item msgid="7880769915418638436">"status_bar_latest_touch"</item>
+    <item msgid="4313165186636015195">"focused_display"</item>
   </string-array>
 </resources>

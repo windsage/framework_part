@@ -47,13 +47,29 @@ import androidx.annotation.VisibleForTesting;
 
 import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.CollectionUtils;
+import com.android.settingslib.flags.Flags;
 
+// QTI_BEGIN: 2021-01-29: Bluetooth: Broadcast UI: Changes to existing files
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+// QTI_END: 2021-01-29: Bluetooth: Broadcast UI: Changes to existing files
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+// QTI_BEGIN: 2018-03-21: Bluetooth: DUN: Add framework changes to support DUN
+import android.os.SystemProperties;
+// QTI_END: 2018-03-21: Bluetooth: DUN: Add framework changes to support DUN
+// QTI_BEGIN: 2021-02-01: Bluetooth: Add BC profile entry
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+// QTI_END: 2021-02-01: Bluetooth: Add BC profile entry
+// QTI_BEGIN: 2021-04-22: Bluetooth: Access BC capabiltiy from BC profile
+import java.lang.reflect.Method;
+// QTI_END: 2021-04-22: Bluetooth: Access BC capabiltiy from BC profile
 
 
 /**
@@ -90,7 +106,9 @@ public class LocalBluetoothProfileManager {
 
     private final Context mContext;
     private final CachedBluetoothDeviceManager mDeviceManager;
-    private final BluetoothEventManager mEventManager;
+// QTI_BEGIN: 2020-11-26: Bluetooth: DeviceGroup: Framework changes for Group Device operations.
+    protected final BluetoothEventManager mEventManager;
+// QTI_END: 2020-11-26: Bluetooth: DeviceGroup: Framework changes for Group Device operations.
 
     private A2dpProfile mA2dpProfile;
     private A2dpSinkProfile mA2dpSinkProfile;
@@ -113,6 +131,10 @@ public class LocalBluetoothProfileManager {
     private SapProfile mSapProfile;
     private VolumeControlProfile mVolumeControlProfile;
 
+// QTI_BEGIN: 2021-02-01: Bluetooth: Add BC profile entry
+    private static final String BC_CONNECTION_STATE_CHANGED =
+            "android.bluetooth.bc.profile.action.CONNECTION_STATE_CHANGED";
+// QTI_END: 2021-02-01: Bluetooth: Add BC profile entry
     /**
      * Mapping from profile name, e.g. "HEADSET" to profile object.
      */
@@ -330,6 +352,13 @@ public class LocalBluetoothProfileManager {
         }
 
         public void onReceive(Context context, Intent intent, BluetoothDevice device) {
+// QTI_BEGIN: 2018-03-22: Bluetooth: Sync Preference in UI for new cached device
+            if (device == null) {
+                Log.w(TAG, "StateChangedHandler receives state-change for invalid device");
+                return;
+            }
+
+// QTI_END: 2018-03-22: Bluetooth: Sync Preference in UI for new cached device
             CachedBluetoothDevice cachedDevice = mDeviceManager.findDevice(device);
             if (cachedDevice == null) {
                 Log.w(TAG, "StateChangedHandler found new device: " + device);
@@ -345,11 +374,20 @@ public class LocalBluetoothProfileManager {
                     oldState == BluetoothProfile.STATE_CONNECTING) {
                 Log.i(TAG, "Failed to connect " + mProfile + " device");
             }
+            final boolean isAshaProfile = getHearingAidProfile() != null
+                    && mProfile instanceof HearingAidProfile;
+            final boolean isHapClientProfile = getHapClientProfile() != null
+                    && mProfile instanceof HapClientProfile;
+            final boolean isLeAudioProfile = getLeAudioProfile() != null
+                    && mProfile instanceof LeAudioProfile;
+            final boolean isHapClientOrLeAudioProfile = isHapClientProfile || isLeAudioProfile;
+            final boolean isCsipProfile = getCsipSetCoordinatorProfile() != null
+                    && mProfile instanceof CsipSetCoordinatorProfile;
 
-            if (getHearingAidProfile() != null
-                    && mProfile instanceof HearingAidProfile
-                    && (newState == BluetoothProfile.STATE_CONNECTED)) {
-
+            if (isAshaProfile && (newState == BluetoothProfile.STATE_CONNECTED)) {
+                if (DEBUG) {
+                    Log.d(TAG, "onReceive, hearing aid profile connected, check hisyncid");
+                }
                 // Check if the HiSyncID has being initialized
                 if (cachedDevice.getHiSyncId() == BluetoothHearingAid.HI_SYNC_ID_INVALID) {
                     long newHiSyncId = getHearingAidProfile().getHiSyncId(cachedDevice.getDevice());
@@ -366,13 +404,10 @@ public class LocalBluetoothProfileManager {
                 HearingAidStatsLogUtils.logHearingAidInfo(cachedDevice);
             }
 
-            final boolean isHapClientProfile = getHapClientProfile() != null
-                    && mProfile instanceof HapClientProfile;
-            final boolean isLeAudioProfile = getLeAudioProfile() != null
-                    && mProfile instanceof LeAudioProfile;
-            final boolean isHapClientOrLeAudioProfile = isHapClientProfile || isLeAudioProfile;
             if (isHapClientOrLeAudioProfile && newState == BluetoothProfile.STATE_CONNECTED) {
-
+                if (DEBUG) {
+                    Log.d(TAG, "onReceive, hap/lea profile connected, check hearing aid info");
+                }
                 // Checks if both profiles are connected to the device. Hearing aid info need
                 // to be retrieved from these profiles separately.
                 if (cachedDevice.isConnectedLeAudioHearingAidDevice()) {
@@ -385,21 +420,45 @@ public class LocalBluetoothProfileManager {
                 }
             }
 
-            if (getCsipSetCoordinatorProfile() != null
-                    && mProfile instanceof CsipSetCoordinatorProfile
-                    && newState == BluetoothProfile.STATE_CONNECTED) {
+            if (isCsipProfile && (newState == BluetoothProfile.STATE_CONNECTED)) {
+                if (DEBUG) {
+                    Log.d(TAG, "onReceive, csip profile connected, check group id");
+                }
                 // Check if the GroupID has being initialized
                 if (cachedDevice.getGroupId() == BluetoothCsipSetCoordinator.GROUP_ID_INVALID) {
                     final Map<Integer, ParcelUuid> groupIdMap = getCsipSetCoordinatorProfile()
                             .getGroupUuidMapByDevice(cachedDevice.getDevice());
+                    if (DEBUG) {
+                        Log.d(TAG, "csip group uuid map = " + groupIdMap);
+                    }
                     if (groupIdMap != null) {
                         for (Map.Entry<Integer, ParcelUuid> entry: groupIdMap.entrySet()) {
-                            if (entry.getValue().equals(BluetoothUuid.CAP)) {
+// QTI_BEGIN: 2022-04-23: Bluetooth: Csip: Add below enhancements
+                            //Based on spec CAP UUID is not mandatory,also we see failures with PTS
+                            //if (entry.getValue().equals(BluetoothUuid.CAP)) {
+// QTI_END: 2022-04-23: Bluetooth: Csip: Add below enhancements
                                 cachedDevice.setGroupId(entry.getKey());
                                 break;
-                            }
+// QTI_BEGIN: 2022-04-23: Bluetooth: Csip: Add below enhancements
+                            //}
+// QTI_END: 2022-04-23: Bluetooth: Csip: Add below enhancements
                         }
                     }
+                }
+            }
+
+            // LE_AUDIO, CSIP_SET_COORDINATOR profiles will also impact the connection status
+            // change, e.g. device need to active on LE_AUDIO to become active connection status.
+            final Set<Integer> hearingDeviceConnectionStatusProfileId = Set.of(
+                    BluetoothProfile.HEARING_AID,
+                    BluetoothProfile.HAP_CLIENT,
+                    BluetoothProfile.LE_AUDIO,
+                    BluetoothProfile.CSIP_SET_COORDINATOR
+            );
+            if (Flags.hearingDeviceSetConnectionStatusReport()) {
+                if (hearingDeviceConnectionStatusProfileId.contains(mProfile.getProfileId())) {
+                    mDeviceManager.notifyHearingDevicesConnectionStatusChangedIfNeeded(
+                            cachedDevice);
                 }
             }
 
@@ -415,6 +474,9 @@ public class LocalBluetoothProfileManager {
                         mProfile.getProfileId());
             }
             if (needDispatchProfileConnectionState) {
+                if (DEBUG) {
+                    Log.d(TAG, "needDispatchProfileConnectionState");
+                }
                 cachedDevice.refresh();
                 mEventManager.dispatchProfileConnectionStateChanged(cachedDevice, newState,
                         mProfile.getProfileId());
@@ -629,7 +691,8 @@ public class LocalBluetoothProfileManager {
             if ((ArrayUtils.contains(localUuids, BluetoothUuid.HSP_AG)
                     && ArrayUtils.contains(uuids, BluetoothUuid.HSP))
                     || (ArrayUtils.contains(localUuids, BluetoothUuid.HFP_AG)
-                    && ArrayUtils.contains(uuids, BluetoothUuid.HFP))) {
+                    && ArrayUtils.contains(uuids, BluetoothUuid.HFP))
+                    || (mHeadsetProfile.getConnectionStatus(device) == BluetoothProfile.STATE_CONNECTED)) {
                 profiles.add(mHeadsetProfile);
                 removedProfiles.remove(mHeadsetProfile);
             }
@@ -642,11 +705,60 @@ public class LocalBluetoothProfileManager {
             removedProfiles.remove(mHfpClientProfile);
         }
 
-        if (BluetoothUuid.containsAnyUuid(uuids, A2dpProfile.SINK_UUIDS) && mA2dpProfile != null) {
+        if ((mA2dpProfile != null)
+                && (BluetoothUuid.containsAnyUuid(uuids, A2dpProfile.SINK_UUIDS)
+                || (mA2dpProfile.getConnectionStatus(device) == BluetoothProfile.STATE_CONNECTED))) {
             profiles.add(mA2dpProfile);
             removedProfiles.remove(mA2dpProfile);
         }
+// QTI_BEGIN: 2023-10-19: Bluetooth: Enable AOSP BT APEX
+/*
+// QTI_END: 2023-10-19: Bluetooth: Enable AOSP BT APEX
+// QTI_BEGIN: 2021-05-05: Bluetooth: Remove usage of adv audio mask property
+        if (mHeadsetProfile != null) {
+            if (ArrayUtils.contains(uuids, BluetoothUuid.ADVANCE_VOICE_P_UUID)
+                   || ArrayUtils.contains(uuids, BluetoothUuid.ADVANCE_VOICE_T_UUID)
+                   || ArrayUtils.contains(uuids, BluetoothUuid.ADVANCE_HEARINGAID_UUID)
+                   || (mHeadsetProfile.getConnectionStatus(device)
+                      == BluetoothProfile.STATE_CONNECTED)) {
+                if (!profiles.contains(mHeadsetProfile)) {
+                    profiles.add(mHeadsetProfile);
+                    removedProfiles.remove(mHeadsetProfile);
+                    if (DEBUG) Log.d(TAG, "Advance Audio Voice supported");
+                } else {
+                    if (DEBUG) Log.d(TAG, "HeadsetProfile already added");
+// QTI_END: 2021-05-05: Bluetooth: Remove usage of adv audio mask property
+// QTI_BEGIN: 2021-01-17: Bluetooth: GAP Adv Audio: Adding new Advance Audio UUID's
+                }
+            }
+// QTI_END: 2021-01-17: Bluetooth: GAP Adv Audio: Adding new Advance Audio UUID's
+// QTI_BEGIN: 2021-05-05: Bluetooth: Remove usage of adv audio mask property
+        }
+// QTI_END: 2021-05-05: Bluetooth: Remove usage of adv audio mask property
 
+// QTI_BEGIN: 2021-05-05: Bluetooth: Remove usage of adv audio mask property
+        if ((mA2dpProfile != null)
+            && (ArrayUtils.contains(uuids, BluetoothUuid.ADVANCE_MEDIA_T_UUID)
+                || ArrayUtils.contains(uuids, BluetoothUuid.ADVANCE_HEARINGAID_UUID)
+                || ArrayUtils.contains(uuids, BluetoothUuid.ADVANCE_MEDIA_P_UUID)
+                || ArrayUtils.contains(uuids, BluetoothUuid.ADVANCE_MEDIA_G_UUID)
+                || ArrayUtils.contains(uuids, BluetoothUuid.ADVANCE_MEDIA_W_UUID)
+                || (mA2dpProfile.getConnectionStatus(device)
+                    == BluetoothProfile.STATE_CONNECTED))) {
+            if (!profiles.contains(mA2dpProfile)) {
+                profiles.add(mA2dpProfile);
+                removedProfiles.remove(mA2dpProfile);
+                if (DEBUG) Log.d(TAG, "Advance Audio Media supported");
+            } else {
+                if (DEBUG) Log.d(TAG, "A2dpProfile already added");
+// QTI_END: 2021-05-05: Bluetooth: Remove usage of adv audio mask property
+// QTI_BEGIN: 2021-01-17: Bluetooth: GAP Adv Audio: Adding new Advance Audio UUID's
+            }
+        }
+// QTI_END: 2021-01-17: Bluetooth: GAP Adv Audio: Adding new Advance Audio UUID's
+// QTI_BEGIN: 2023-10-19: Bluetooth: Enable AOSP BT APEX
+*/
+// QTI_END: 2023-10-19: Bluetooth: Enable AOSP BT APEX
         if (BluetoothUuid.containsAnyUuid(uuids, A2dpSinkProfile.SRC_UUIDS)
                 && mA2dpSinkProfile != null) {
                 profiles.add(mA2dpSinkProfile);
@@ -685,8 +797,10 @@ public class LocalBluetoothProfileManager {
             mMapProfile.setEnabled(device, true);
         }
 
-        if ((mPbapProfile != null) &&
-            (mPbapProfile.getConnectionStatus(device) == BluetoothProfile.STATE_CONNECTED)) {
+// QTI_BEGIN: 2021-07-30: Bluetooth: Avoid removing PBAP in device details when remote supports it
+        if ((mPbapProfile != null)
+                && BluetoothUuid.containsAnyUuid(uuids, PbapServerProfile.PBAB_CLIENT_UUIDS) ) {
+// QTI_END: 2021-07-30: Bluetooth: Avoid removing PBAP in device details when remote supports it
             profiles.add(mPbapProfile);
             removedProfiles.remove(mPbapProfile);
             mPbapProfile.setEnabled(device, true);
@@ -707,11 +821,6 @@ public class LocalBluetoothProfileManager {
         if (ArrayUtils.contains(uuids, BluetoothUuid.HEARING_AID) && mHearingAidProfile != null) {
             profiles.add(mHearingAidProfile);
             removedProfiles.remove(mHearingAidProfile);
-        }
-
-        if (mHapClientProfile != null && ArrayUtils.contains(uuids, BluetoothUuid.HAS)) {
-            profiles.add(mHapClientProfile);
-            removedProfiles.remove(mHapClientProfile);
         }
 
         if (mSapProfile != null && ArrayUtils.contains(uuids, BluetoothUuid.SAP)) {

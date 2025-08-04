@@ -152,7 +152,6 @@ import com.android.net.module.util.NetworkStackConstants;
 import com.android.server.DeviceIdleInternal;
 import com.android.server.LocalServices;
 import com.android.server.net.BaseNetworkObserver;
-import com.android.server.utils.LazyJniRegistrar;
 
 import libcore.io.IoUtils;
 
@@ -469,8 +468,6 @@ public class Vpn {
 
     @VisibleForTesting
     public static class Dependencies {
-        protected Dependencies() {}
-
         public boolean isCallerSystem() {
             return Binder.getCallingUid() == Process.SYSTEM_UID;
         }
@@ -596,14 +593,6 @@ public class Vpn {
         }
     }
 
-    // A helper class to ensure JNI registration before use. This avoids native lib dependencies in
-    // test-only environments that mock or partially use the base Dependencies class.
-    private static final class DependenciesWithJniRegistration extends Dependencies {
-        static {
-            LazyJniRegistrar.registerVpn();
-        }
-    }
-
     @VisibleForTesting
     interface ValidationStatusCallback {
         void onValidationStatus(int status);
@@ -611,8 +600,8 @@ public class Vpn {
 
     public Vpn(Looper looper, Context context, INetworkManagementService netService, INetd netd,
             @UserIdInt int userId, VpnProfileStore vpnProfileStore) {
-        this(looper, context, new DependenciesWithJniRegistration(), netService, netd, userId,
-                vpnProfileStore, new SystemServices(context), new Ikev2SessionCreator());
+        this(looper, context, new Dependencies(), netService, netd, userId, vpnProfileStore,
+                new SystemServices(context), new Ikev2SessionCreator());
     }
 
     @VisibleForTesting

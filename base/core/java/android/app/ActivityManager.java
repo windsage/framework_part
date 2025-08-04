@@ -55,9 +55,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Point;
-import android.graphics.Rect;
 import android.graphics.drawable.Icon;
-import android.hardware.HardwareBuffer;
 import android.os.BatteryStats;
 import android.os.Binder;
 import android.os.Build;
@@ -86,7 +84,6 @@ import android.util.Log;
 import android.util.Singleton;
 import android.util.Size;
 import android.view.WindowInsetsController.Appearance;
-import android.window.TaskSnapshot;
 
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.app.LocalePicker;
@@ -1191,7 +1188,7 @@ public class ActivityManager {
 
     /** @hide Should this process state be considered jank perceptible? */
     public static final boolean isProcStateJankPerceptible(int procState) {
-        if (Flags.jankPerceptibleNarrow()) {
+        if (Flags.jankPerceptibleNarrow() && !Flags.jankPerceptibleNarrowHoldback()) {
             return procState == PROCESS_STATE_PERSISTENT_UI
                 || procState == PROCESS_STATE_TOP
                 || procState == PROCESS_STATE_IMPORTANT_FOREGROUND
@@ -3102,7 +3099,8 @@ public class ActivityManager {
     /**
      * Flag for {@link #moveTaskToFront(int, int)}: also move the "home"
      * activity along with the task, so it is positioned immediately behind
-     * the task.
+     * the task. This flag is ignored if the task's windowing mode is
+     * {@link WindowConfiguration#WINDOWING_MODE_MULTI_WINDOW}.
      */
     public static final int MOVE_TASK_WITH_HOME = 0x00000001;
 
@@ -4975,6 +4973,25 @@ public class ActivityManager {
     }
 
     /**
+     * Fully stop the given app's processes without restoring service starts or
+     * bindings, but without the other durable effects of the full-scale
+     * "force stop" intervention.
+     *
+     * @param packageName The name of the package to be stopped.
+     *
+     * @hide This is not available to third party applications due to
+     * it allowing them to break other applications by stopping their
+     * services.
+     */
+    public void stopPackageForUser(String packageName) {
+        try {
+            getService().stopAppForUser(packageName, mContext.getUserId());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Sets the current locales of the device. Calling app must have the permission
      * {@code android.permission.CHANGE_CONFIGURATION} and
      * {@code android.permission.WRITE_SETTINGS}.
@@ -5401,10 +5418,11 @@ public class ActivityManager {
      *
      * @hide
      */
+    @Nullable
     @RequiresPermission(Manifest.permission.MANAGE_USERS)
-    public @Nullable String getSwitchingFromUserMessage() {
+    public String getSwitchingFromUserMessage(@UserIdInt int userId) {
         try {
-            return getService().getSwitchingFromUserMessage();
+            return getService().getSwitchingFromUserMessage(userId);
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
         }
@@ -5415,10 +5433,11 @@ public class ActivityManager {
      *
      * @hide
      */
+    @Nullable
     @RequiresPermission(Manifest.permission.MANAGE_USERS)
-    public @Nullable String getSwitchingToUserMessage() {
+    public String getSwitchingToUserMessage(@UserIdInt int userId) {
         try {
-            return getService().getSwitchingToUserMessage();
+            return getService().getSwitchingToUserMessage(userId);
         } catch (RemoteException re) {
             throw re.rethrowFromSystemServer();
         }
@@ -6568,4 +6587,148 @@ public class ActivityManager {
                     }
                 };
     }
+
+    //SPD: Add for uias by yunjun.yang 20241204 start
+    /** {@hide} */
+    public boolean updateUiasStatus(String pkg, int tid, String threadName, String tagName,
+                                    boolean isAddTag) {
+        try {
+            return getService().updateUiasStatus(pkg, tid, threadName, tagName, isAddTag);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    //SPD: Add for uias by yunjun.yang 20241204 end
+    //SPD: Add for aegean by yunjun.yang 20250227 start
+    /** {@hide} */
+    public List<String> getVisPkgInScreen() {
+        try {
+            return getService().getVisPkgInScreen();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    public int isVisPkgInScreen(String pkg) {
+        try {
+            return getService().isVisPkgInScreen(pkg);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    //SPD: Add for aegean by yunjun.yang 20250227 end
+
+    //SDD: add for [memfusion2.1] by yuling.fu 20221116 start
+    /**
+     * enable or disable mem compaction
+     *
+     * @param enable if swapfile on and can du mem compaction
+     * @return if memfusion canbe enabled or not, return 0 if success,
+     * or -1: service not available
+     * or -1001: storage not enough
+     * or -1002: storage PE value reach its limits and not sugguested to write
+     * or -1003: disabled by cloud control
+     *
+     * @hide
+     */
+    @UnsupportedAppUsage
+    public int setMemFusionEnable(boolean enable) {
+        try{
+            return getService().setMemFusionEnable(enable);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public void switchMemFusion(boolean enable) {
+        try{
+            getService().switchMemFusion(enable);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public void compactAppFullForced(String appName, int uid) {
+        try{
+            getService().compactAppFullForced(appName, uid);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public boolean isUxCompactionSupport() {
+        try{
+            return getService().isUxCompactionSupport();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public void switchUXCompaction(boolean enable) {
+        try{
+            getService().switchUXCompaction(enable);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public void changeCompactionMem(String meminfo) {
+        try{
+            getService().changeCompactionMem(meminfo);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public List<String> getSwapFileSizeList() {
+        try{
+            return getService().getSwapFileSizeList();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public int isMemoryEnoughToMF(String memFusionSize) {
+        try{
+            return getService().isMemoryEnoughToMF(memFusionSize);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public int getMemoryForMF(String memFusionSize) {
+        try{
+            return getService().getMemoryForMF(memFusionSize);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public boolean isMatchCurMemSelection() {
+        try{
+            return getService().isMatchCurMemSelection();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** {@hide} */
+    @UnsupportedAppUsage
+    public boolean isMemSettingEnterEnabled() {
+        try{
+            return getService().isMemSettingEnterEnabled();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    //SDD: add for [memfusion2.1] by yuling.fu 20221116 end
 }

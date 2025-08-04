@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -28,6 +36,7 @@
 #include <aidl/android/hardware/graphics/common/DisplayHotplugEvent.h>
 #include <android/binder_manager.h>
 #include <android/hardware/graphics/composer/2.1/types.h>
+#include <common/FlagManager.h>
 #include <common/trace.h>
 #include <composer-command-buffer/2.2/ComposerCommandBuffer.h>
 #include <hidl/HidlTransportSupport.h>
@@ -217,6 +226,67 @@ sp<GraphicBuffer> allocateClearSlotBuffer() {
 
 } // anonymous namespace
 
+// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+void HidlComposer::CommandWriter::qtiSetDisplayElapseTime(uint64_t time) {
+    constexpr uint16_t kSetDisplayElapseTimeLength = 2;
+// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+#ifdef QTI_DISPLAY_EXTENSION
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+                         IQtiComposerClient::Command::SET_DISPLAY_ELAPSE_TIME),
+                 kSetDisplayElapseTimeLength);
+    write64(time);
+    endCommand();
+// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+#endif
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+}
+// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+
+void HidlComposer::CommandWriter::qtiSetLayerType(uint32_t type) {
+    constexpr uint16_t kSetLayerTypeLength = 1;
+#ifdef QTI_DISPLAY_EXTENSION
+    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+                         IQtiComposerClient::Command::SET_LAYER_TYPE),
+                 kSetLayerTypeLength);
+    write(type);
+    endCommand();
+#endif
+}
+
+void HidlComposer::CommandWriter::qtiSetClientTarget_3_1(int32_t slot, int acquireFence,
+                                                         Dataspace dataspace) {
+    constexpr uint16_t KSetClientTargetLength = 3;
+#ifdef QTI_DISPLAY_EXTENSION
+    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+                         IQtiComposerClient::Command::SET_CLIENT_TARGET_3_1),
+                 KSetClientTargetLength);
+    write(slot);
+    writeFence(acquireFence);
+    writeSigned(static_cast<int32_t>(dataspace));
+    endCommand();
+#endif
+}
+
+void HidlComposer::CommandWriter::qtiSetLayerFlag(uint32_t type) {
+#ifdef QTI_DISPLAY_EXTENSION
+    constexpr uint16_t kSetLayerFlagLength = 1;
+    beginCommand(static_cast<V2_1::IComposerClient::Command>(
+                         IQtiComposerClient::Command::SET_LAYER_FLAG_3_1),
+                 kSetLayerFlagLength);
+    write(type);
+    endCommand();
+#endif
+}
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
+
+// QTI_END: 2023-01-30: Display: sf: Add support for setDisplayElapseTime
 HidlComposer::HidlComposer(const std::string& serviceName)
       : mClearSlotBuffer(allocateClearSlotBuffer()), mWriter(kWriterInitialSize) {
     mComposer = V2_1::IComposer::getService(serviceName);
@@ -225,6 +295,22 @@ HidlComposer::HidlComposer(const std::string& serviceName)
         LOG_ALWAYS_FATAL("failed to get hwcomposer service");
     }
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+#ifdef QTI_DISPLAY_EXTENSION
+    if (sp<IQtiComposer> composer_3_1 = IQtiComposer::castFrom(mComposer)) {
+        composer_3_1->createClient_3_1([&](const auto& tmpError, const auto& tmpClient) {
+            if (tmpError == V2_1::Error::NONE) {
+                mClient_3_1 = tmpClient;
+                mClient = tmpClient;
+                mClient_2_2 = tmpClient;
+                mClient_2_3 = tmpClient;
+                mClient_2_4 = tmpClient;
+            }
+        });
+    } else
+#endif
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (sp<IComposer> composer_2_4 = IComposer::castFrom(mComposer)) {
         composer_2_4->createClient_2_4([&](const auto& tmpError, const auto& tmpClient) {
             if (tmpError == V2_4::Error::NONE) {
@@ -301,7 +387,9 @@ std::string HidlComposer::dumpDebugInfo() {
 }
 
 void HidlComposer::registerCallback(const sp<IComposerCallback>& callback) {
-    android::hardware::setMinSchedulerPolicy(callback, SCHED_FIFO, 2);
+    if (!FlagManager::getInstance().disable_sched_fifo_composer_callback()) {
+        android::hardware::setMinSchedulerPolicy(callback, SCHED_FIFO, 2);
+    }
 
     auto ret = [&]() {
         if (mClient_2_4) {
@@ -590,6 +678,11 @@ Error HidlComposer::getReleaseFences(Display display, std::vector<Layer>* outLay
     return Error::NONE;
 }
 
+Error HidlComposer::getLayerPresentFences(Display, std::vector<Layer>*, std::vector<int>*,
+                                          std::vector<int64_t>*) {
+    return Error::UNSUPPORTED;
+}
+
 Error HidlComposer::presentDisplay(Display display, int* outPresentFence) {
     SFTRACE_NAME("HwcPresentDisplay");
     mWriter.selectDisplay(display);
@@ -708,6 +801,13 @@ Error HidlComposer::presentOrValidateDisplay(Display display, nsecs_t /*expected
 
     mReader.takePresentOrValidateStage(display, state);
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    if (*state == 2) { // Validate and present succeeded.
+        mReader.takePresentFence(display, outPresentFence);
+        mReader.hasChanges(display, outNumTypes, outNumRequests);
+    }
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (*state == 1) { // Present succeeded
         mReader.takePresentFence(display, outPresentFence);
     }
@@ -1222,15 +1322,16 @@ Error HidlComposer::getDisplayCapabilities(Display display,
                                                             translate<DisplayCapability>(tmpCaps);
                                                 });
     } else {
-        mClient_2_3
-                ->getDisplayCapabilities(display, [&](const auto& tmpError, const auto& tmpCaps) {
-                    error = static_cast<V2_4::Error>(tmpError);
-                    if (error != V2_4::Error::NONE) {
-                        return;
-                    }
+        mClient_2_3->getDisplayCapabilities(display,
+                                            [&](const auto& tmpError, const auto& tmpCaps) {
+                                                error = static_cast<V2_4::Error>(tmpError);
+                                                if (error != V2_4::Error::NONE) {
+                                                    return;
+                                                }
 
-                    *outCapabilities = translate<DisplayCapability>(tmpCaps);
-                });
+                                                *outCapabilities =
+                                                        translate<DisplayCapability>(tmpCaps);
+                                            });
     }
 
     return static_cast<Error>(error);
@@ -1449,6 +1550,15 @@ Error HidlComposer::getPhysicalDisplayOrientation(Display, AidlTransform*) {
 }
 
 Error HidlComposer::getMaxLayerPictureProfiles(Display, int32_t*) {
+    return Error::UNSUPPORTED;
+}
+
+Error HidlComposer::startHdcpNegotiation(Display, const aidl::android::hardware::drm::HdcpLevels&) {
+    return Error::UNSUPPORTED;
+}
+
+Error HidlComposer::getLuts(Display, const std::vector<sp<GraphicBuffer>>&,
+                            std::vector<aidl::android::hardware::graphics::composer3::Luts>*) {
     return Error::UNSUPPORTED;
 }
 

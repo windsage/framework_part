@@ -439,11 +439,8 @@ Error Display::setActiveConfigWithConstraints(hal::HWConfigId configId,
     // FIXME (b/319505580): At least the first config set on an external display must be
     // `setActiveConfig`, so skip over the block that calls `setActiveConfigWithConstraints`
     // for simplicity.
-    const bool connected_display = FlagManager::getInstance().connected_display();
-
     if (isVsyncPeriodSwitchSupported() &&
-        (!connected_display ||
-         getConnectionType().value_opt() != ui::DisplayConnectionType::External)) {
+        getConnectionType().value_opt() != ui::DisplayConnectionType::External) {
         Hwc2::IComposerClient::VsyncPeriodChangeConstraints hwc2Constraints;
         hwc2Constraints.desiredTimeNanos = constraints.desiredTimeNanos;
         hwc2Constraints.seamlessRequired = constraints.seamlessRequired;
@@ -560,6 +557,15 @@ Error Display::presentOrValidate(nsecs_t expectedPresentTime, int32_t frameInter
         *outNumTypes = numTypes;
         *outNumRequests = numRequests;
     }
+// QTI_BEGIN: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
+
+    // Validate and present display succeeded with comp changes.
+    if (*state == 2) {
+        *outNumTypes = numTypes;
+        *outNumRequests = numRequests;
+        *outPresentFence = sp<Fence>::make(presentFenceFd);
+    }
+// QTI_END: 2023-03-22: Display: surfaceflinger: Fixes for spec fence
     return error;
 }
 
@@ -629,7 +635,7 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
         auto layer = getLayerById(layerIds[i]);
         if (layer) {
             auto& layerLut = tmpLuts[i];
-            if (layerLut.luts.pfd.get() > 0 && layerLut.luts.offsets.has_value()) {
+            if (layerLut.luts.pfd.get() >= 0 && layerLut.luts.offsets.has_value()) {
                 const auto& offsets = layerLut.luts.offsets.value();
                 std::vector<std::pair<int32_t, LutProperties>> lutOffsetsAndProperties;
                 lutOffsetsAndProperties.reserve(offsets.size());
@@ -638,9 +644,17 @@ Error Display::getRequestedLuts(LayerLuts* outLuts,
                                [](int32_t i, LutProperties j) { return std::make_pair(i, j); });
                 outLuts->emplace_or_replace(layer.get(), lutOffsetsAndProperties);
                 lutFileDescriptorMapper.emplace_or_replace(layer.get(),
-                                                           ndk::ScopedFileDescriptor(
+                                                           ::android::base::unique_fd(
                                                                    layerLut.luts.pfd.release()));
+            } else {
+                ALOGE("getRequestedLuts: invalid luts on layer %" PRIu64 " found"
+                      " on display %" PRIu64 ". pfd.get()=%d, offsets.has_value()=%d",
+                      layerIds[i], mId, layerLut.luts.pfd.get(), layerLut.luts.offsets.has_value());
             }
+        } else {
+            ALOGE("getRequestedLuts: invalid layer %" PRIu64 " found"
+                  " on display %" PRIu64,
+                  layerIds[i], mId);
         }
     }
 
@@ -666,6 +680,17 @@ Error Display::getMaxLayerPictureProfiles(int32_t* outMaxProfiles) {
 
 Error Display::setPictureProfileHandle(const PictureProfileHandle& handle) {
     const auto error = mComposer.setDisplayPictureProfileId(mId, handle.getId());
+    return static_cast<Error>(error);
+}
+
+Error Display::startHdcpNegotiation(const aidl::android::hardware::drm::HdcpLevels& levels) {
+    const auto error = mComposer.startHdcpNegotiation(mId, levels);
+    return static_cast<Error>(error);
+}
+
+Error Display::getLuts(const std::vector<sp<GraphicBuffer>>& buffers,
+                       std::vector<aidl::android::hardware::graphics::composer3::Luts>* outLuts) {
+    const auto error = mComposer.getLuts(mId, buffers, outLuts);
     return static_cast<Error>(error);
 }
 
@@ -945,10 +970,18 @@ Error Layer::setPerFrameMetadata(const int32_t supportedPerFrameMetadata,
 
         perFrameMetadataBlobs.push_back(
                 {Hwc2::PerFrameMetadataKey::HDR10_PLUS_SEI, mHdrMetadata.hdr10plus});
-    }
+// QTI_BEGIN: 2023-04-19: Display: sf: Don't send empty metadata blobs to hwc
+        const Error error = static_cast<Error>(
+           mComposer.setLayerPerFrameMetadataBlobs(mDisplay->getId(), mId, perFrameMetadataBlobs));
+        if (error != Error::NONE) {
+            return error;
+        }
+// QTI_END: 2023-04-19: Display: sf: Don't send empty metadata blobs to hwc
 
-    return static_cast<Error>(
-            mComposer.setLayerPerFrameMetadataBlobs(mDisplay->getId(), mId, perFrameMetadataBlobs));
+// QTI_BEGIN: 2023-04-19: Display: sf: Don't send empty metadata blobs to hwc
+    }
+    return Error::NONE;
+// QTI_END: 2023-04-19: Display: sf: Don't send empty metadata blobs to hwc
 }
 
 Error Layer::setDisplayFrame(const Rect& frame)

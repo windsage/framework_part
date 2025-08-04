@@ -41,6 +41,10 @@ stubs_defaults {
         "--hide RequiresPermission",
         "--hide SdkConstant",
         "--hide Todo",
+        //T-HUB Core [SDD]: add decoupling framework by lijia.chen 20220506 start
+        //"--hide-package com.transsion.thub.res",
+        //"--hide-package com.transsion.thub.res.internal",
+        //T-HUB Core [SDD]: add decoupling framework by lijia.chen 20220506 end
     ],
     create_doc_stubs: true,
     write_sdk_values: true,

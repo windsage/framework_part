@@ -8,9 +8,14 @@ package {
     default_team: "trendy_team_android_core_graphics_stack",
 }
 
-cc_defaults {
-    name: "libsurfaceflinger_proto_deps",
+cc_library {
+    name: "liblayers_proto",
     export_include_dirs: ["include"],
+
+    srcs: [
+        "LayerProtoParser.cpp",
+    ],
+
     static_libs: [
         "libperfetto_client_experimental",
     ],
@@ -26,15 +31,24 @@ cc_defaults {
     ],
 
     shared_libs: [
+        "android.hardware.graphics.common@1.1",
+        "libgui",
+        "libui",
         "libprotobuf-cpp-lite",
+        "libbase",
     ],
 
-    header_libs: [
-        "libsurfaceflinger_proto_headers",
+    cppflags: [
+        "-Werror",
+        "-Wno-unused-parameter",
+        "-Wno-format",
+        "-Wno-c++98-compat-pedantic",
+        "-Wno-float-conversion",
+        "-Wno-disabled-macro-expansion",
+        "-Wno-float-equal",
+        "-Wno-sign-conversion",
+        "-Wno-padded",
+        "-Wno-old-style-cast",
+        "-Wno-undef",
     ],
-}
-
-cc_library_headers {
-    name: "libsurfaceflinger_proto_headers",
-    export_include_dirs: ["include"],
 }

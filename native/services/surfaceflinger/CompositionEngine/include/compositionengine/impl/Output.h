@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 #pragma once
 
 #include <ftl/optional.h>
@@ -39,12 +47,15 @@ namespace android::compositionengine::impl {
 // actually contain the final output state.
 class Output : public virtual compositionengine::Output {
 public:
-    Output() = default;
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+    Output();
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     ~Output() override;
 
     // compositionengine::Output overrides
     bool isValid() const override;
     ftl::Optional<DisplayId> getDisplayId() const override;
+    ftl::Optional<DisplayIdVariant> getDisplayIdVariant() const override;
     void setCompositionEnabled(bool) override;
     void setLayerCachingEnabled(bool) override;
     void setLayerCachingTexturePoolEnabled(bool) override;

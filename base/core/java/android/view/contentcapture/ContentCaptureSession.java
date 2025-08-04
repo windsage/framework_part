@@ -19,8 +19,10 @@ import static android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE;
 import static android.view.contentcapture.ContentCaptureHelper.sDebug;
 import static android.view.contentcapture.ContentCaptureHelper.sVerbose;
 import static android.view.contentcapture.ContentCaptureManager.NO_SESSION_ID;
+import static android.view.contentcapture.flags.Flags.FLAG_CCAPI_BAKLAVA_ENABLED;
 
 import android.annotation.CallSuper;
+import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -198,6 +200,8 @@ public abstract class ContentCaptureSession implements AutoCloseable {
     public static final int FLUSH_REASON_VIEW_TREE_APPEARING = 9;
     /** @hide */
     public static final int FLUSH_REASON_VIEW_TREE_APPEARED = 10;
+    /** @hide */
+    public static final int FLUSH_REASON_LOGIN_DETECTED = 11;
 
     /**
      * After {@link android.os.Build.VERSION_CODES#UPSIDE_DOWN_CAKE},
@@ -221,7 +225,8 @@ public abstract class ContentCaptureSession implements AutoCloseable {
                 FLUSH_REASON_SESSION_CONNECTED,
                 FLUSH_REASON_FORCE_FLUSH,
                 FLUSH_REASON_VIEW_TREE_APPEARING,
-                FLUSH_REASON_VIEW_TREE_APPEARED
+                FLUSH_REASON_VIEW_TREE_APPEARED,
+                FLUSH_REASON_LOGIN_DETECTED
             })
     @Retention(RetentionPolicy.SOURCE)
     public @interface FlushReason {}
@@ -548,6 +553,35 @@ public abstract class ContentCaptureSession implements AutoCloseable {
 
     abstract void internalNotifyViewInsetsChanged(int sessionId, @NonNull Insets viewInsets);
 
+    /**
+     * Flushes an internal buffer of UI events and signals System Intelligence (SI) that a
+     * semantically meaningful state has been reached. SI uses this signal to potentially
+     * rebuild the view hierarchy and understand the current state of the UI.
+     *
+     * <p>UI events are often batched together for performance reasons. A semantic batch
+     * represents a series of events that, when applied sequentially, result in a
+     * meaningful and complete UI state.
+     *
+     * <p>It is crucial to call {@code flush()} after completing a semantic batch to ensure
+     * SI can accurately reconstruct the view hierarchy.
+     *
+     * <p><b>Premature Flushing:</b> Calling {@code flush()} within a semantic batch may
+     * lead to SI failing to rebuild the view hierarchy correctly. This could manifest as
+     * incorrect ordering of sibling nodes.
+     *
+     * <p><b>Delayed Flushing:</b> While not immediately flushing after a semantic batch is
+     * generally safe, it's recommended to do so as soon as possible. In the worst-case
+     * scenario where a {@code flush()} is never called, SI will attempt to process the
+     * events after a short delay based on view appearance and disappearance events.
+     */
+    @FlaggedApi(FLAG_CCAPI_BAKLAVA_ENABLED)
+    public void flush() {
+        internalNotifySessionFlushEvent(mId);
+    }
+
+    /** @hide */
+    abstract void internalNotifySessionFlushEvent(int sessionId);
+
     /** @hide */
     public void notifyViewTreeEvent(boolean started) {
         internalNotifyViewTreeEvent(mId, started);
@@ -738,6 +772,8 @@ public abstract class ContentCaptureSession implements AutoCloseable {
                 return "VIEW_TREE_APPEARING";
             case FLUSH_REASON_VIEW_TREE_APPEARED:
                 return "VIEW_TREE_APPEARED";
+            case FLUSH_REASON_LOGIN_DETECTED:
+                return "LOGIN_DETECTED";
             default:
                 return "UNKNOWN-" + reason;
         }

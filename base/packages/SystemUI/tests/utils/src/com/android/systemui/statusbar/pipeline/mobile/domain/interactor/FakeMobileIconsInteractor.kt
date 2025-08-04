@@ -23,6 +23,7 @@ import android.telephony.TelephonyManager.NETWORK_TYPE_UMTS
 import com.android.settingslib.SignalIcon.MobileIconGroup
 import com.android.settingslib.mobile.TelephonyIcons
 import com.android.systemui.log.table.TableLogBuffer
+import com.android.systemui.statusbar.pipeline.mobile.data.model.MobileIconCustomizationMode
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.util.MobileMappingsProxy
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,10 +56,15 @@ class FakeMobileIconsInteractor(
 
     override val filteredSubscriptions = MutableStateFlow<List<SubscriptionModel>>(listOf())
 
+    override val defaultDataSubId: MutableStateFlow<Int?> = MutableStateFlow(DEFAULT_DATA_SUB_ID)
+
+    override val activeMobileDataSubscriptionId: MutableStateFlow<Int?> = MutableStateFlow(null)
+
     private val _activeDataConnectionHasDataEnabled = MutableStateFlow(false)
     override val activeDataConnectionHasDataEnabled = _activeDataConnectionHasDataEnabled
 
-    override val activeDataIconInteractor = MutableStateFlow(null)
+    override val activeDataIconInteractor: MutableStateFlow<MobileIconInteractor?> =
+        MutableStateFlow(null)
 
     override val alwaysShowDataRatIcon = MutableStateFlow(false)
 
@@ -69,6 +75,8 @@ class FakeMobileIconsInteractor(
     override val isSingleCarrier = MutableStateFlow(true)
 
     override val icons: MutableStateFlow<List<MobileIconInteractor>> = MutableStateFlow(emptyList())
+
+    override val isStackable: MutableStateFlow<Boolean> = MutableStateFlow(false)
 
     private val _defaultMobileIconMapping = MutableStateFlow(TEST_MAPPING)
     override val defaultMobileIconMapping = _defaultMobileIconMapping
@@ -83,13 +91,20 @@ class FakeMobileIconsInteractor(
 
     override val isDeviceInEmergencyCallsOnlyMode = MutableStateFlow(false)
 
-    /** Always returns a new fake interactor */
+    override val showVowifiIcon = MutableStateFlow(false)
+    override val showVolteIcon = MutableStateFlow(false)
+    override val networkTypeIconCustomization = MutableStateFlow(MobileIconCustomizationMode())
+    override val hideNoInternetState = MutableStateFlow(false)
+    override val alwaysUseRsrpLevelForLte = MutableStateFlow(false)
+
     override fun getMobileConnectionInteractorForSubId(subId: Int): FakeMobileIconInteractor {
-        return FakeMobileIconInteractor(tableLogBuffer).also {
-            interactorCache[subId] = it
-            // Also update the icons
-            icons.value = interactorCache.values.toList()
-        }
+        return interactorCache
+            .getOrElse(subId) { FakeMobileIconInteractor(tableLogBuffer) }
+            .also {
+                interactorCache[subId] = it
+                // Also update the icons
+                icons.value = interactorCache.values.toList()
+            }
     }
 
     /**

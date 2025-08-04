@@ -43,10 +43,14 @@ import com.android.server.am.PlatformCompatCache.CachedCompatChangeId;
 
 import java.io.PrintWriter;
 
+//T-HUB core[SPD]: added for hstd porting by yinhuan.zhao 20250219 start
+import com.transsion.hubcore.healthstandard.ITranHealthStandard;
+//T-HUB core[SPD]: added for hstd porting by yinhuan.zhao 20250219 end
+
 /**
  * The state info of the process, including proc state, oom adj score, et al.
  */
-final class ProcessStateRecord {
+public final class ProcessStateRecord {
     // Enable this to trace all OomAdjuster state transitions
     private static final boolean TRACE_OOM_ADJ = false;
 
@@ -521,6 +525,9 @@ final class ProcessStateRecord {
 
     @GuardedBy({"mService", "mProcLock"})
     void setSetAdj(int setAdj) {
+        //T-HUB Core[SPD]:add for hstd by yunjun.yang 20240909 start
+        ITranHealthStandard.Instance().hookSetSetAdj(mApp, mAdjSource, mAdjTarget, setAdj);
+        //T-HUB Core[SPD]:add for hstd by yunjun.yang 20240909 end
         mSetAdj = setAdj;
     }
 
@@ -1120,7 +1127,8 @@ final class ProcessStateRecord {
         } else if ((flags & ACTIVITY_STATE_FLAG_IS_STOPPING) != 0) {
             callback.onStoppingActivity((flags & ACTIVITY_STATE_FLAG_IS_STOPPING_FINISHING) != 0);
         } else {
-            callback.onOtherActivity();
+            final long ts = mApp.getWindowProcessController().getPerceptibleTaskStoppedTimeMillis();
+            callback.onOtherActivity(ts);
         }
 
         mCachedAdj = callback.adj;

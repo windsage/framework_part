@@ -64,6 +64,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+//T-HUB core[OS]: add by zijiang.wang 20200509 start
+import com.transsion.hubcore.server.ITranSystemServer;
+//T-HUB core[OS]: add by zijiang.wang 20200509 end
 /**
  * Manages creating, starting, and other lifecycle events of
  * {@link com.android.server.SystemService system services}.
@@ -327,6 +330,9 @@ public final class SystemServiceManager implements Dumpable {
             }
         } finally {
             t.traceEnd();
+            //T-HUB core [OS]: add for OSRDEV-12 by zhiwei.li 2020716 start
+            ITranSystemServer.Instance().onStartBootPhase(phase);
+            //T-HUB core [OS]: add for OSRDEV-12 by zhiwei.li 2020716 end
         }
 
         if (phase == SystemService.PHASE_BOOT_COMPLETED) {

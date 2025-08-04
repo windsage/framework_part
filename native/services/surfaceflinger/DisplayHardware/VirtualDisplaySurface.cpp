@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wconversion"
@@ -34,6 +42,10 @@
 #include "SurfaceFlinger.h"
 #include "VirtualDisplaySurface.h"
 
+// QTI_BEGIN: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
+#include "../QtiExtension/QtiSurfaceFlingerExtensionFactory.h"
+
+// QTI_END: 2023-02-26: Display: AidlComposerHal: Add support for QtiComposer3Client
 #define VDS_LOGE(msg, ...) ALOGE("[%s] " msg, \
         mDisplayName.c_str(), ##__VA_ARGS__)
 #define VDS_LOGW_IF(cond, msg, ...) ALOGW_IF(cond, "[%s] " msg, \
@@ -47,18 +59,22 @@
 
 namespace android {
 
-VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc, VirtualDisplayId displayId,
+VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc,
+                                             VirtualDisplayIdVariant virtualIdVariant,
                                              const sp<IGraphicBufferProducer>& sink,
                                              const sp<IGraphicBufferProducer>& bqProducer,
                                              const sp<IGraphicBufferConsumer>& bqConsumer,
-                                             const std::string& name)
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+                                             const std::string& name,
+                                             bool qtiSecure)
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
       : ConsumerBase(bqProducer, bqConsumer),
 #else
       : ConsumerBase(bqConsumer),
 #endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
         mHwc(hwc),
-        mDisplayId(displayId),
+        mVirtualIdVariant(virtualIdVariant),
         mDisplayName(name),
         mSource{},
         mDefaultOutputFormat(HAL_PIXEL_FORMAT_IMPLEMENTATION_DEFINED),
@@ -92,6 +108,20 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc, VirtualDisplayId d
     // on usage bits.
     int sinkUsage;
     sink->query(NATIVE_WINDOW_CONSUMER_USAGE_BITS, &sinkUsage);
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    if (!mQtiDSExtnIntf) {
+        mQtiDSExtnIntf = surfaceflingerextension::
+                qtiCreateDisplaySurfaceExtension(/* isVirtual */ true, this, qtiSecure, sinkUsage,
+                                                 /* FramebufferSurface */ nullptr);
+    }
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+    mOutputUsage = mQtiDSExtnIntf->qtiSetOutputUsage();
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     if (sinkUsage & (GRALLOC_USAGE_SW_READ_MASK | GRALLOC_USAGE_SW_WRITE_MASK)) {
         int sinkFormat;
         sink->query(NATIVE_WINDOW_FORMAT, &sinkFormat);
@@ -116,15 +146,27 @@ VirtualDisplaySurface::VirtualDisplaySurface(HWComposer& hwc, VirtualDisplayId d
 
 VirtualDisplaySurface::~VirtualDisplaySurface() {
     mSource[SOURCE_SCRATCH]->disconnect(NATIVE_WINDOW_API_EGL);
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+
+    delete mQtiDSExtnIntf;
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 }
 
 status_t VirtualDisplaySurface::beginFrame(bool mustRecompose) {
-    if (GpuVirtualDisplayId::tryCast(mDisplayId)) {
+    if (isBackedByGpu()) {
         return NO_ERROR;
     }
 
     mMustRecompose = mustRecompose;
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+    // For WFD use cases we must always set the recompose flag in order
+    // to support pause/resume functionality
+    if (mOutputUsage & GRALLOC_USAGE_HW_VIDEO_ENCODER) {
+        mMustRecompose = true;
+    }
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     VDS_LOGW_IF(mDebugState != DebugState::Idle, "Unexpected %s in %s state", __func__,
                 ftl::enum_string(mDebugState).c_str());
     mDebugState = DebugState::Begun;
@@ -133,7 +175,7 @@ status_t VirtualDisplaySurface::beginFrame(bool mustRecompose) {
 }
 
 status_t VirtualDisplaySurface::prepareFrame(CompositionType compositionType) {
-    if (GpuVirtualDisplayId::tryCast(mDisplayId)) {
+    if (isBackedByGpu()) {
         return NO_ERROR;
     }
 
@@ -161,7 +203,10 @@ status_t VirtualDisplaySurface::prepareFrame(CompositionType compositionType) {
     }
 
     if (mCompositionType != CompositionType::Gpu &&
-        (mOutputFormat != mDefaultOutputFormat || mOutputUsage != GRALLOC_USAGE_HW_COMPOSER)) {
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+        (mOutputFormat != mDefaultOutputFormat ||
+         !(mOutputUsage & GRALLOC_USAGE_HW_COMPOSER))) {
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
         // We must have just switched from GPU-only to MIXED or HWC
         // composition. Stop using the format and usage requested by the GPU
         // driver; they may be suboptimal when HWC is writing to the output
@@ -173,7 +218,9 @@ status_t VirtualDisplaySurface::prepareFrame(CompositionType compositionType) {
         // format/usage and get a new buffer when the GPU driver calls
         // dequeueBuffer().
         mOutputFormat = mDefaultOutputFormat;
-        mOutputUsage = GRALLOC_USAGE_HW_COMPOSER;
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+        mOutputUsage = mQtiDSExtnIntf->qtiSetOutputUsage(GRALLOC_USAGE_HW_COMPOSER);
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
         refreshOutputBuffer();
     }
 
@@ -181,7 +228,10 @@ status_t VirtualDisplaySurface::prepareFrame(CompositionType compositionType) {
 }
 
 status_t VirtualDisplaySurface::advanceFrame(float hdrSdrRatio) {
-    if (GpuVirtualDisplayId::tryCast(mDisplayId)) {
+    const auto halVirtualDisplayId = ftl::match(
+            mVirtualIdVariant, [](HalVirtualDisplayId id) { return ftl::Optional(id); },
+            [](auto) { return ftl::Optional<HalVirtualDisplayId>(); });
+    if (!halVirtualDisplayId) {
         return NO_ERROR;
     }
 
@@ -212,11 +262,8 @@ status_t VirtualDisplaySurface::advanceFrame(float hdrSdrRatio) {
     VDS_LOGV("%s: fb=%d(%p) out=%d(%p)", __func__, mFbProducerSlot, fbBuffer.get(),
              mOutputProducerSlot, outBuffer.get());
 
-    const auto halDisplayId = HalVirtualDisplayId::tryCast(mDisplayId);
-    LOG_FATAL_IF(!halDisplayId);
-    // At this point we know the output buffer acquire fence,
-    // so update HWC state with it.
-    mHwc.setOutputBuffer(*halDisplayId, mOutputFence, outBuffer);
+    // At this point we know the output buffer acquire fence, so update HWC state with it.
+    mHwc.setOutputBuffer(*halVirtualDisplayId, mOutputFence, outBuffer);
 
     status_t result = NO_ERROR;
     if (fbBuffer != nullptr) {
@@ -227,7 +274,7 @@ status_t VirtualDisplaySurface::advanceFrame(float hdrSdrRatio) {
             hwcBuffer = fbBuffer; // HWC hasn't previously seen this buffer in this slot
         }
         // TODO: Correctly propagate the dataspace from GL composition
-        result = mHwc.setClientTarget(*halDisplayId, mFbProducerSlot, mFbFence, hwcBuffer,
+        result = mHwc.setClientTarget(*halVirtualDisplayId, mFbProducerSlot, mFbFence, hwcBuffer,
                                       ui::Dataspace::UNKNOWN, hdrSdrRatio);
     }
 
@@ -235,8 +282,8 @@ status_t VirtualDisplaySurface::advanceFrame(float hdrSdrRatio) {
 }
 
 void VirtualDisplaySurface::onFrameCommitted() {
-    const auto halDisplayId = HalVirtualDisplayId::tryCast(mDisplayId);
-    if (!halDisplayId) {
+    const auto halDisplayId = asHalDisplayId(mVirtualIdVariant);
+    if (!halDisplayId.has_value()) {
         return;
     }
 
@@ -250,8 +297,7 @@ void VirtualDisplaySurface::onFrameCommitted() {
         Mutex::Autolock lock(mMutex);
         int sslot = mapProducer2SourceSlot(SOURCE_SCRATCH, mFbProducerSlot);
         VDS_LOGV("%s: release scratch sslot=%d", __func__, sslot);
-        addReleaseFenceLocked(sslot, mProducerBuffers[mFbProducerSlot],
-                retireFence);
+        addReleaseFenceLocked(sslot, mProducerBuffers[mFbProducerSlot], retireFence);
         releaseBufferLocked(sslot, mProducerBuffers[mFbProducerSlot]);
     }
 
@@ -259,7 +305,9 @@ void VirtualDisplaySurface::onFrameCommitted() {
         int sslot = mapProducer2SourceSlot(SOURCE_SINK, mOutputProducerSlot);
         QueueBufferOutput qbo;
         VDS_LOGV("%s: queue sink sslot=%d", __func__, sslot);
-        if (mMustRecompose) {
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+        if (retireFence->isValid() && mMustRecompose) {
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
             status_t result = mSource[SOURCE_SINK]->queueBuffer(sslot,
                     QueueBufferInput(
                         systemTime(), false /* isAutoTimestamp */,
@@ -299,7 +347,7 @@ const sp<Fence>& VirtualDisplaySurface::getClientTargetAcquireFence() const {
 
 status_t VirtualDisplaySurface::requestBuffer(int pslot,
         sp<GraphicBuffer>* outBuf) {
-    if (GpuVirtualDisplayId::tryCast(mDisplayId)) {
+    if (isBackedByGpu()) {
         return mSource[SOURCE_SINK]->requestBuffer(pslot, outBuf);
     }
 
@@ -321,8 +369,14 @@ status_t VirtualDisplaySurface::setAsyncMode(bool async) {
 
 status_t VirtualDisplaySurface::dequeueBuffer(Source source,
         PixelFormat format, uint64_t usage, int* sslot, sp<Fence>* fence) {
-    LOG_ALWAYS_FATAL_IF(GpuVirtualDisplayId::tryCast(mDisplayId).has_value());
+    LOG_ALWAYS_FATAL_IF(isBackedByGpu());
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+    if (mQtiDSExtnIntf && source == SOURCE_SCRATCH) {
+        usage = mQtiDSExtnIntf->qtiExcludeVideoFromScratchBuffer(ftl::enum_string(source), usage);
+    }
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     status_t result =
             mSource[source]->dequeueBuffer(sslot, fence, mSinkBufferWidth, mSinkBufferHeight,
                                            format, usage, nullptr, nullptr);
@@ -373,7 +427,7 @@ status_t VirtualDisplaySurface::dequeueBuffer(int* pslot, sp<Fence>* fence, uint
                                               PixelFormat format, uint64_t usage,
                                               uint64_t* outBufferAge,
                                               FrameEventHistoryDelta* outTimestamps) {
-    if (GpuVirtualDisplayId::tryCast(mDisplayId)) {
+    if (isBackedByGpu()) {
         return mSource[SOURCE_SINK]->dequeueBuffer(pslot, fence, w, h, format, usage, outBufferAge,
                                                    outTimestamps);
     }
@@ -417,7 +471,9 @@ status_t VirtualDisplaySurface::dequeueBuffer(int* pslot, sp<Fence>* fence, uint
                      __func__, w, h, format, usage, mSinkBufferWidth, mSinkBufferHeight,
                      buf->getPixelFormat(), buf->getUsage());
             mOutputFormat = format;
-            mOutputUsage = usage;
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+            mOutputUsage = mQtiDSExtnIntf->qtiSetOutputUsage(usage);
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
             result = refreshOutputBuffer();
             if (result < 0)
                 return result;
@@ -459,7 +515,7 @@ status_t VirtualDisplaySurface::attachBuffer(int*, const sp<GraphicBuffer>&) {
 
 status_t VirtualDisplaySurface::queueBuffer(int pslot,
         const QueueBufferInput& input, QueueBufferOutput* output) {
-    if (GpuVirtualDisplayId::tryCast(mDisplayId)) {
+    if (isBackedByGpu()) {
         return mSource[SOURCE_SINK]->queueBuffer(pslot, input, output);
     }
 
@@ -517,7 +573,7 @@ status_t VirtualDisplaySurface::queueBuffer(int pslot,
 
 status_t VirtualDisplaySurface::cancelBuffer(int pslot,
         const sp<Fence>& fence) {
-    if (GpuVirtualDisplayId::tryCast(mDisplayId)) {
+    if (isBackedByGpu()) {
         return mSource[SOURCE_SINK]->cancelBuffer(mapProducer2SourceSlot(SOURCE_SINK, pslot), fence);
     }
 
@@ -621,7 +677,10 @@ void VirtualDisplaySurface::resetPerFrameState() {
 }
 
 status_t VirtualDisplaySurface::refreshOutputBuffer() {
-    LOG_ALWAYS_FATAL_IF(GpuVirtualDisplayId::tryCast(mDisplayId).has_value());
+    const auto halVirtualDisplayId = ftl::match(
+            mVirtualIdVariant, [](HalVirtualDisplayId id) { return ftl::Optional(id); },
+            [](auto) { return ftl::Optional<HalVirtualDisplayId>(); });
+    LOG_ALWAYS_FATAL_IF(!halVirtualDisplayId);
 
     if (mOutputProducerSlot >= 0) {
         mSource[SOURCE_SINK]->cancelBuffer(
@@ -640,12 +699,14 @@ status_t VirtualDisplaySurface::refreshOutputBuffer() {
     // until after GPU calls queueBuffer(). So here we just set the buffer
     // (for use in HWC prepare) but not the fence; we'll call this again with
     // the proper fence once we have it.
-    const auto halDisplayId = HalVirtualDisplayId::tryCast(mDisplayId);
-    LOG_FATAL_IF(!halDisplayId);
-    result = mHwc.setOutputBuffer(*halDisplayId, Fence::NO_FENCE,
+    result = mHwc.setOutputBuffer(*halVirtualDisplayId, Fence::NO_FENCE,
                                   mProducerBuffers[mOutputProducerSlot]);
 
     return result;
+}
+
+bool VirtualDisplaySurface::isBackedByGpu() const {
+    return std::holds_alternative<GpuVirtualDisplayId>(mVirtualIdVariant);
 }
 
 // This slot mapping function is its own inverse, so two copies are unnecessary.

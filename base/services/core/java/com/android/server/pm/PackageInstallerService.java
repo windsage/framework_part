@@ -675,6 +675,9 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
     int createSessionInternal(SessionParams params, String installerPackageName,
             String installerAttributionTag, int callingUid, int userId)
             throws IOException {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record(90);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         final Computer snapshot = mPm.snapshotComputer();
         snapshot.enforceCrossUserPermission(callingUid, userId, true, true, "createSession");
 
@@ -805,22 +808,20 @@ public class PackageInstallerService extends IPackageInstaller.Stub implements
             }
         }
 
-        if (Flags.recoverabilityDetection()) {
-            if (params.rollbackImpactLevel == PackageManager.ROLLBACK_USER_IMPACT_HIGH
-                    || params.rollbackImpactLevel
-                    == PackageManager.ROLLBACK_USER_IMPACT_ONLY_MANUAL) {
-                if ((params.installFlags & PackageManager.INSTALL_ENABLE_ROLLBACK) == 0) {
-                    throw new IllegalArgumentException(
-                            "Can't set rollbackImpactLevel when rollback is not enabled");
-                }
-                if (mContext.checkCallingOrSelfPermission(Manifest.permission.MANAGE_ROLLBACKS)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    throw new SecurityException(
-                            "Setting rollbackImpactLevel requires the MANAGE_ROLLBACKS permission");
-                }
-            } else if (params.rollbackImpactLevel < 0) {
-                throw new IllegalArgumentException("rollbackImpactLevel can't be negative.");
+        if (params.rollbackImpactLevel == PackageManager.ROLLBACK_USER_IMPACT_HIGH
+                || params.rollbackImpactLevel
+                == PackageManager.ROLLBACK_USER_IMPACT_ONLY_MANUAL) {
+            if ((params.installFlags & PackageManager.INSTALL_ENABLE_ROLLBACK) == 0) {
+                throw new IllegalArgumentException(
+                        "Can't set rollbackImpactLevel when rollback is not enabled");
             }
+            if (mContext.checkCallingOrSelfPermission(Manifest.permission.MANAGE_ROLLBACKS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                throw new SecurityException(
+                        "Setting rollbackImpactLevel requires the MANAGE_ROLLBACKS permission");
+            }
+        } else if (params.rollbackImpactLevel < 0) {
+            throw new IllegalArgumentException("rollbackImpactLevel can't be negative.");
         }
 
         boolean isApex = (params.installFlags & PackageManager.INSTALL_APEX) != 0;

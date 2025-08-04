@@ -146,6 +146,7 @@ interface IActivityTaskManager {
     int getFrontActivityScreenCompatMode();
     void setFrontActivityScreenCompatMode(int mode);
     void setFocusedTask(int taskId);
+    boolean setTaskIsPerceptible(int taskId, boolean isPerceptible);
     boolean removeTask(int taskId);
     void removeAllVisibleRecentTasks();
     List<ActivityManager.RunningTaskInfo> getTasks(int maxNum, boolean filterOnlyVisibleRecents,
@@ -157,6 +158,12 @@ interface IActivityTaskManager {
     boolean isTopActivityImmersive();
     void reportAssistContextExtras(in IBinder assistToken, in Bundle extras,
             in AssistStructure structure, in AssistContent content, in Uri referrer);
+
+    /**
+     * @return whether the app could be universal resizeable (assuming it's on a large screen and
+     * ignoring possible overrides)
+     */
+    boolean canBeUniversalResizeable(in ApplicationInfo appInfo);
 
     void setFocusedRootTask(int taskId);
     ActivityTaskManager.RootTaskInfo getFocusedRootTaskInfo();
@@ -362,6 +369,11 @@ interface IActivityTaskManager {
             in RemoteCallback navigationObserver, in BackAnimationAdapter adaptor);
 
     /**
+     * Registers a callback to be invoked when the system server requests a back gesture.
+     */
+    void registerBackGestureDelegate(in RemoteCallback monitor);
+
+    /**
      * registers a callback to be invoked when a background activity launch is aborted.
      *
      * @param observer callback to be registered.
@@ -396,4 +408,8 @@ interface IActivityTaskManager {
      * @hide
      */
     void unregisterScreenCaptureObserver(IBinder activityToken, IScreenCaptureObserver observer);
+
+    //T-HUB Core[SPD]:added for pre start by fan.feng1 20250304 start
+    void startLauncherAction(in Intent intent, int action);
+    //T-HUB Core[SPD]:added for pre start by fan.feng1 20250304 end
 }

@@ -27,7 +27,7 @@ import java.util.ArrayList;
 /**
  * The state info of all content providers in the process.
  */
-final class ProcessProviderRecord {
+public final class ProcessProviderRecord {
     final ProcessRecord mApp;
     private final ActivityManagerService mService;
 

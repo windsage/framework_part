@@ -42,6 +42,9 @@ import java.util.List;
 
 public class A2dpProfile implements LocalBluetoothProfile {
     private static final String TAG = "A2dpProfile";
+// QTI_BEGIN: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
+    private static boolean V = true;
+// QTI_END: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
 
     private Context mContext;
 
@@ -224,6 +227,13 @@ public class A2dpProfile implements LocalBluetoothProfile {
     }
 
     public boolean supportsHighQualityAudio(BluetoothDevice device) {
+// QTI_BEGIN: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
+        if (V) Log.d(TAG, " execute supportsHighQualityAudio()");
+        if (mService == null) {
+            if (V) Log.d(TAG,"mService is null.");
+            return false;
+        }
+// QTI_END: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
         BluetoothDevice bluetoothDevice = (device != null) ? device : getActiveDevice();
         if (bluetoothDevice == null) {
             return false;
@@ -237,6 +247,13 @@ public class A2dpProfile implements LocalBluetoothProfile {
      */
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     public boolean isHighQualityAudioEnabled(BluetoothDevice device) {
+// QTI_BEGIN: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
+        if (V) Log.d(TAG, " execute isHighQualityAudioEnabled()");
+        if (mService == null) {
+            if (V) Log.d(TAG,"mService is null.");
+            return false;
+        }
+// QTI_END: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
         BluetoothDevice bluetoothDevice = (device != null) ? device : getActiveDevice();
         if (bluetoothDevice == null) {
             return false;
@@ -262,14 +279,50 @@ public class A2dpProfile implements LocalBluetoothProfile {
         }
     }
 
+// QTI_BEGIN: 2021-09-03: Bluetooth: Add new function isMandatoryCodec
+    public boolean isMandatoryCodec(BluetoothDevice device) {
+        if (V) Log.d(TAG, " execute isMandatoryCodec()");
+        if (mService == null) {
+            if (V) Log.d(TAG,"mService is null.");
+            return false;
+        }
+// QTI_END: 2021-09-03: Bluetooth: Add new function isMandatoryCodec
+// QTI_BEGIN: 2023-10-19: Bluetooth: Enable AOSP BT APEX
+        BluetoothDevice bluetoothDevice = (device != null) ? device : getActiveDevice();
+// QTI_END: 2023-10-19: Bluetooth: Enable AOSP BT APEX
+// QTI_BEGIN: 2021-09-03: Bluetooth: Add new function isMandatoryCodec
+        if (bluetoothDevice == null) {
+            return false;
+        }
+        BluetoothCodecConfig codecConfig = null;
+        if (mService.getCodecStatus(bluetoothDevice) != null) {
+            codecConfig = mService.getCodecStatus(bluetoothDevice).getCodecConfig();
+        }
+        if (codecConfig != null)  {
+            return codecConfig.isMandatoryCodec();
+        } else {
+            return false;
+        }
+    }
+
+// QTI_END: 2021-09-03: Bluetooth: Add new function isMandatoryCodec
     public void setHighQualityAudioEnabled(BluetoothDevice device, boolean enabled) {
+// QTI_BEGIN: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
+        if (V) Log.d(TAG, " execute setHighQualityAudioEnabled()");
+// QTI_END: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
+        int prefValue = enabled
+                ? BluetoothA2dp.OPTIONAL_CODECS_PREF_ENABLED
+                : BluetoothA2dp.OPTIONAL_CODECS_PREF_DISABLED;
+// QTI_BEGIN: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
+        if (mService == null) {
+            if (V) Log.d(TAG,"mService is null.");
+            return;
+        }
+// QTI_END: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
         BluetoothDevice bluetoothDevice = (device != null) ? device : getActiveDevice();
         if (bluetoothDevice == null) {
             return;
         }
-        int prefValue = enabled
-                ? BluetoothA2dp.OPTIONAL_CODECS_PREF_ENABLED
-                : BluetoothA2dp.OPTIONAL_CODECS_PREF_DISABLED;
         mService.setOptionalCodecsEnabled(bluetoothDevice, prefValue);
         if (getConnectionStatus(bluetoothDevice) != BluetoothProfile.STATE_CONNECTED) {
             return;
@@ -289,6 +342,9 @@ public class A2dpProfile implements LocalBluetoothProfile {
      */
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     public String getHighQualityAudioOptionLabel(BluetoothDevice device) {
+// QTI_BEGIN: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
+        if (V) Log.d(TAG, " execute getHighQualityAudioOptionLabel()");
+// QTI_END: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
         BluetoothDevice bluetoothDevice = (device != null) ? device : getActiveDevice();
         int unknownCodecId = R.string.bluetooth_profile_a2dp_high_quality_unknown_codec;
         if (bluetoothDevice == null || !supportsHighQualityAudio(device)
@@ -298,7 +354,9 @@ public class A2dpProfile implements LocalBluetoothProfile {
         // We want to get the highest priority codec, since that's the one that will be used with
         // this device, and see if it is high-quality (ie non-mandatory).
         List<BluetoothCodecConfig> selectable = null;
-        if (mService.getCodecStatus(device) != null) {
+// QTI_BEGIN: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
+        if (mService != null && mService.getCodecStatus(device) != null) {
+// QTI_END: 2019-05-16: Bluetooth: Keep a null check before accessing the BluetoothA2dpWrapper APIs.
             selectable = mService.getCodecStatus(device).getCodecsSelectableCapabilities();
             // To get the highest priority, we sort in reverse.
             Collections.sort(selectable,
@@ -329,12 +387,22 @@ public class A2dpProfile implements LocalBluetoothProfile {
            case BluetoothCodecConfig.SOURCE_CODEC_TYPE_LDAC:
                index = 5;
                break;
-            case BluetoothCodecConfig.SOURCE_CODEC_TYPE_LC3:
-                index = 6;
-                break;
-            case BluetoothCodecConfig.SOURCE_CODEC_TYPE_OPUS:
-                index = 7;
-                break;
+           case BluetoothCodecConfig.SOURCE_CODEC_TYPE_LC3:
+// QTI_BEGIN: 2018-07-17: Bluetooth: BT: Adding aptX-Adaptive codec entry to Framework
+               index = 6;
+               break;
+// QTI_END: 2018-07-17: Bluetooth: BT: Adding aptX-Adaptive codec entry to Framework
+           case BluetoothCodecConfig.SOURCE_CODEC_TYPE_OPUS:
+// QTI_BEGIN: 2019-04-04: Bluetooth: TWS-A2DP: Add TWS+ codec to DevUI support
+               index = 7;
+               break;
+// QTI_END: 2019-04-04: Bluetooth: TWS-A2DP: Add TWS+ codec to DevUI support
+           case BluetoothCodecConfig.SOURCE_CODEC_TYPE_APTX_ADAPTIVE:
+               index = 8;
+               break;
+           case BluetoothCodecConfig.SOURCE_CODEC_TYPE_APTX_TWSP:
+               index = 9;
+               break;
            }
 
         if (index < 0) {

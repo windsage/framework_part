@@ -155,6 +155,9 @@ private:
 
     private:
         struct UsageSession {
+            UsageSession() {};
+            UsageSession(std::chrono::nanoseconds s, std::chrono::nanoseconds e) :
+                start(s), end(s) {}
             std::chrono::nanoseconds start{};
             std::chrono::nanoseconds end{};
         };

@@ -38,7 +38,7 @@ import com.android.internal.app.procstats.ProcessStats;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 
-final class ContentProviderRecord implements ComponentName.WithComponentName {
+public final class ContentProviderRecord implements ComponentName.WithComponentName {
     // Maximum attempts to bring up the content provider before giving up.
     static final int MAX_RETRY_COUNT = 3;
 

@@ -101,13 +101,18 @@ extern int register_android_media_AudioTrack(JNIEnv *env);
 extern int register_android_media_AudioAttributes(JNIEnv *env);
 extern int register_android_media_AudioProductStrategies(JNIEnv *env);
 extern int register_android_media_AudioVolumeGroups(JNIEnv *env);
-extern int register_android_media_AudioVolumeGroupChangeHandler(JNIEnv *env);
+extern int register_android_media_ImageReader(JNIEnv *env);
+extern int register_android_media_ImageWriter(JNIEnv *env);
 extern int register_android_media_MicrophoneInfo(JNIEnv *env);
+extern int register_android_media_PublicFormatUtils(JNIEnv *env);
 extern int register_android_media_ToneGenerator(JNIEnv *env);
 extern int register_android_media_audio_common_AidlConversion(JNIEnv* env);
 extern int register_android_media_midi(JNIEnv *env);
 
 namespace android {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+extern int register_android_util_SeempLog(JNIEnv* env);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
 
 /*
  * JNI-based registration functions.  Note these are properly contained in
@@ -159,6 +164,8 @@ extern int register_android_os_SELinux(JNIEnv* env);
 extern int register_android_os_storage_StorageManager(JNIEnv* env);
 extern int register_android_os_SystemProperties(JNIEnv *env);
 extern int register_android_os_SystemClock(JNIEnv* env);
+extern int register_android_os_PerfettoTrace(JNIEnv* env);
+extern int register_android_os_PerfettoTrackEventExtra(JNIEnv* env);
 extern int register_android_os_Trace(JNIEnv* env);
 extern int register_android_os_FileObserver(JNIEnv *env);
 extern int register_android_os_UEventObserver(JNIEnv* env);
@@ -226,11 +233,18 @@ extern int register_com_android_internal_util_VirtualRefBasePtr(JNIEnv *env);
 extern int register_android_window_WindowInfosListener(JNIEnv* env);
 extern int register_android_window_ScreenCapture(JNIEnv* env);
 extern int register_jni_common(JNIEnv* env);
+// QTI_BEGIN: 2018-02-20: Performance: Activity Trigger frameworks support
+extern int register_com_android_internal_app_ActivityTrigger(JNIEnv *env);
+// QTI_END: 2018-02-20: Performance: Activity Trigger frameworks support
 extern int register_android_tracing_PerfettoDataSource(JNIEnv* env);
 extern int register_android_tracing_PerfettoDataSourceInstance(JNIEnv* env);
 extern int register_android_tracing_PerfettoProducer(JNIEnv* env);
 extern int register_android_window_InputTransferToken(JNIEnv* env);
 extern int register_android_view_WindowManagerGlobal(JNIEnv* env);
+//T-HUB Core[SPD]:added for trancare by chongyang.zhang 2022.05.23 start
+extern int register_com_transsion_hubsdk_trancare_trancare_TranTrancareNative(JNIEnv* env);
+extern int register_com_transsion_hubsdk_trancare_trancare_TranCloudEngineNative(JNIEnv* env);
+//T-HUB Core[SPD]:added for trancare by chongyang.zhang 2022.05.23 end
 
 // Namespace for Android Runtime flags applied during boot time.
 static const char* RUNTIME_NATIVE_BOOT_NAMESPACE = "runtime_native_boot";
@@ -1534,6 +1548,7 @@ static int register_jni_procs(const RegJNIRec array[], size_t count, JNIEnv* env
 }
 
 static const RegJNIRec gRegJNI[] = {
+        REG_JNI(register_android_util_SeempLog),
         REG_JNI(register_com_android_internal_os_ApplicationSharedMemory),
         REG_JNI(register_com_android_internal_os_RuntimeInit),
         REG_JNI(register_com_android_internal_os_ZygoteInit_nativeZygoteInit),
@@ -1610,6 +1625,8 @@ static const RegJNIRec gRegJNI[] = {
         REG_JNI(register_android_os_GraphicsEnvironment),
         REG_JNI(register_android_os_MessageQueue),
         REG_JNI(register_android_os_SELinux),
+        REG_JNI(register_android_os_PerfettoTrace),
+        REG_JNI(register_android_os_PerfettoTrackEventExtra),
         REG_JNI(register_android_os_Trace),
         REG_JNI(register_android_os_UEventObserver),
         REG_JNI(register_android_net_LocalSocketImpl),
@@ -1653,9 +1670,11 @@ static const RegJNIRec gRegJNI[] = {
         REG_JNI(register_android_media_AudioAttributes),
         REG_JNI(register_android_media_AudioProductStrategies),
         REG_JNI(register_android_media_AudioVolumeGroups),
-        REG_JNI(register_android_media_AudioVolumeGroupChangeHandler),
+        REG_JNI(register_android_media_ImageReader),
+        REG_JNI(register_android_media_ImageWriter),
         REG_JNI(register_android_media_MediaMetrics),
         REG_JNI(register_android_media_MicrophoneInfo),
+        REG_JNI(register_android_media_PublicFormatUtils),
         REG_JNI(register_android_media_RemoteDisplay),
         REG_JNI(register_android_media_ToneGenerator),
         REG_JNI(register_android_media_audio_common_AidlConversion),
@@ -1697,18 +1716,22 @@ static const RegJNIRec gRegJNI[] = {
         REG_JNI(register_com_android_internal_os_KernelCpuBpfTracking),
         REG_JNI(register_com_android_internal_os_KernelCpuTotalBpfMapReader),
         REG_JNI(register_com_android_internal_os_KernelCpuUidBpfMapReader),
-        REG_JNI(register_com_android_internal_os_KernelSingleProcessCpuThreadReader),
         REG_JNI(register_com_android_internal_os_KernelSingleUidTimeReader),
 
         REG_JNI(register_android_window_WindowInfosListener),
         REG_JNI(register_android_window_ScreenCapture),
         REG_JNI(register_jni_common),
-
         REG_JNI(register_android_tracing_PerfettoDataSource),
         REG_JNI(register_android_tracing_PerfettoDataSourceInstance),
         REG_JNI(register_android_tracing_PerfettoProducer),
+        REG_JNI(register_com_android_internal_app_ActivityTrigger),
+        REG_JNI(register_com_android_internal_os_KernelSingleProcessCpuThreadReader),
         REG_JNI(register_android_window_InputTransferToken),
         REG_JNI(register_android_view_WindowManagerGlobal),
+        //T-HUB Core[SPD]:added for trancare by chongyang.zhang 2022.05.23 start
+        REG_JNI(register_com_transsion_hubsdk_trancare_trancare_TranTrancareNative),
+        REG_JNI(register_com_transsion_hubsdk_trancare_trancare_TranCloudEngineNative),
+        //T-HUB Core[SPD]:added for trancare by chongyang.zhang 2022.05.23 end
 };
 
 /*

@@ -107,7 +107,10 @@ struct TimelineItem {
 struct JankClassificationThresholds {
     // The various thresholds for App and SF. If the actual timestamp falls within the threshold
     // compared to prediction, we treat it as on time.
-    nsecs_t presentThreshold = std::chrono::duration_cast<std::chrono::nanoseconds>(2ms).count();
+    nsecs_t presentThresholdLegacy =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(2ms).count();
+    nsecs_t presentThresholdExtended =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(4ms).count();
     nsecs_t deadlineThreshold = std::chrono::duration_cast<std::chrono::nanoseconds>(0ms).count();
     nsecs_t startThreshold = std::chrono::duration_cast<std::chrono::nanoseconds>(2ms).count();
 };
@@ -215,6 +218,9 @@ public:
     void dump(std::string& result, const std::string& indent, nsecs_t baseTime) const;
     // Dumps only the layer, token, is buffer, jank metadata, prediction and present states.
     std::string miniDump() const;
+// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
+    void dumpPresentTime(std::string& result) const;
+// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
     // Emits a packet for perfetto tracing. The function body will be executed only if tracing is
     // enabled. The displayFrameToken is needed to link the SurfaceFrame to the corresponding
     // DisplayFrame at the trace processor side. monoBootOffset is the difference
@@ -328,11 +334,6 @@ public:
     virtual void setSfPresent(nsecs_t sfPresentTime, const std::shared_ptr<FenceTime>& presentFence,
                               const std::shared_ptr<FenceTime>& gpuFence) = 0;
 
-    // Provides surface frames that have already been jank classified in the most recent
-    // flush of pending present fences. This allows buffer stuffing detection from SF.
-    virtual const std::vector<std::shared_ptr<frametimeline::SurfaceFrame>>& getPresentFrames()
-            const = 0;
-
     // Tells FrameTimeline that a frame was committed but not composited. This is used to flush
     // all the associated surface frames.
     virtual void onCommitNotComposited() = 0;
@@ -406,6 +407,9 @@ public:
         // Dumpsys interface - dumps only if the DisplayFrame itself is janky or is at least one
         // SurfaceFrame is janky.
         void dumpJank(std::string& result, nsecs_t baseTime, int displayFrameCount) const;
+// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
+        void dumpPresentTime(std::string& result) const;
+// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
         // Dumpsys interface - dumps all data irrespective of jank
         void dumpAll(std::string& result, nsecs_t baseTime) const;
         // Emits a packet for perfetto tracing. The function body will be executed only if tracing
@@ -510,8 +514,6 @@ public:
     void setSfWakeUp(int64_t token, nsecs_t wakeupTime, Fps refreshRate, Fps renderRate) override;
     void setSfPresent(nsecs_t sfPresentTime, const std::shared_ptr<FenceTime>& presentFence,
                       const std::shared_ptr<FenceTime>& gpuFence = FenceTime::NO_FENCE) override;
-    const std::vector<std::shared_ptr<frametimeline::SurfaceFrame>>& getPresentFrames()
-            const override;
     void onCommitNotComposited() override;
     void parseArgs(const Vector<String16>& args, std::string& result) override;
     void setMaxDisplayFrames(uint32_t size) override;
@@ -536,6 +538,9 @@ private:
     void finalizeCurrentDisplayFrame() REQUIRES(mMutex);
     void dumpAll(std::string& result);
     void dumpJank(std::string& result);
+// QTI_BEGIN: 2024-03-18: Performance: SF: Add one dump option to print present time only
+    void dumpPresentTime(std::string& result);
+// QTI_END: 2024-03-18: Performance: SF: Add one dump option to print present time only
 
     // Sliding window of display frames. TODO(b/168072834): compare perf with fixed size array
     std::deque<std::shared_ptr<DisplayFrame>> mDisplayFrames GUARDED_BY(mMutex);
@@ -559,9 +564,6 @@ private:
     // display frame, this is a good starting size for the vector so that we can avoid the
     // internal vector resizing that happens with push_back.
     static constexpr uint32_t kNumSurfaceFramesInitial = 10;
-    // Presented surface frames that have been jank classified and can
-    // indicate of potential buffer stuffing.
-    std::vector<std::shared_ptr<frametimeline::SurfaceFrame>> mPresentFrames;
 };
 
 } // namespace impl

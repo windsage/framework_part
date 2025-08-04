@@ -23,6 +23,7 @@
 #include <future>
 
 #include <android-base/stringprintf.h>
+#include <common/FlagManager.h>
 #include <common/trace.h>
 #include <private/gui/SyncFeatures.h>
 #include <processgroup/processgroup.h>
@@ -60,7 +61,7 @@ status_t RenderEngineThreaded::setSchedFifo(bool enabled) {
 
     struct sched_param param = {0};
     int sched_policy;
-    if (enabled) {
+    if (enabled && !FlagManager::getInstance().disable_sched_fifo_re()) {
         sched_policy = SCHED_FIFO;
         param.sched_priority = kFifoPriority;
     } else {
@@ -249,11 +250,10 @@ void RenderEngineThreaded::drawLayersInternal(
     return;
 }
 
-void RenderEngineThreaded::drawGainmapInternal(
+void RenderEngineThreaded::tonemapAndDrawGainmapInternal(
         const std::shared_ptr<std::promise<FenceResult>>&& resultPromise,
-        const std::shared_ptr<ExternalTexture>& sdr, base::borrowed_fd&& sdrFence,
         const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
-        float hdrSdrRatio, ui::Dataspace dataspace,
+        float hdrSdrRatio, ui::Dataspace dataspace, const std::shared_ptr<ExternalTexture>& sdr,
         const std::shared_ptr<ExternalTexture>& gainmap) {
     resultPromise->set_value(Fence::NO_FENCE);
     return;
@@ -281,10 +281,9 @@ ftl::Future<FenceResult> RenderEngineThreaded::drawLayers(
     return resultFuture;
 }
 
-ftl::Future<FenceResult> RenderEngineThreaded::drawGainmap(
-        const std::shared_ptr<ExternalTexture>& sdr, base::borrowed_fd&& sdrFence,
+ftl::Future<FenceResult> RenderEngineThreaded::tonemapAndDrawGainmap(
         const std::shared_ptr<ExternalTexture>& hdr, base::borrowed_fd&& hdrFence,
-        float hdrSdrRatio, ui::Dataspace dataspace,
+        float hdrSdrRatio, ui::Dataspace dataspace, const std::shared_ptr<ExternalTexture>& sdr,
         const std::shared_ptr<ExternalTexture>& gainmap) {
     SFTRACE_CALL();
     const auto resultPromise = std::make_shared<std::promise<FenceResult>>();
@@ -292,13 +291,14 @@ ftl::Future<FenceResult> RenderEngineThreaded::drawGainmap(
     {
         std::lock_guard lock(mThreadMutex);
         mNeedsPostRenderCleanup = true;
-        mFunctionCalls.push([resultPromise, sdr, sdrFence = std::move(sdrFence), hdr,
-                             hdrFence = std::move(hdrFence), hdrSdrRatio, dataspace,
+        mFunctionCalls.push([resultPromise, hdr, hdrFence = std::move(hdrFence), hdrSdrRatio,
+                             dataspace, sdr,
                              gainmap](renderengine::RenderEngine& instance) mutable {
-            SFTRACE_NAME("REThreaded::drawGainmap");
-            instance.updateProtectedContext({}, {sdr.get(), hdr.get(), gainmap.get()});
-            instance.drawGainmapInternal(std::move(resultPromise), sdr, std::move(sdrFence), hdr,
-                                         std::move(hdrFence), hdrSdrRatio, dataspace, gainmap);
+            SFTRACE_NAME("REThreaded::tonemapAndDrawGainmap");
+            instance.updateProtectedContext({}, {hdr.get(), sdr.get(), gainmap.get()});
+            instance.tonemapAndDrawGainmapInternal(std::move(resultPromise), hdr,
+                                                   std::move(hdrFence), hdrSdrRatio, dataspace, sdr,
+                                                   gainmap);
         });
     }
     mCondition.notify_one();
@@ -364,6 +364,29 @@ void RenderEngineThreaded::setEnableTracing(bool tracingEnabled) {
     }
     mCondition.notify_one();
 }
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
+
+// This is originally owned by AOSP, however it was removed on Android U. Adding this back for FB
+// Scaling.
+void RenderEngineThreaded::setViewportAndProjection(Rect viewPort, Rect sourceCrop) {
+    std::promise<void> resultPromise;
+    std::future<void> resultFuture = resultPromise.get_future();
+    {
+        std::lock_guard lock(mThreadMutex);
+        mFunctionCalls.push(
+                [&resultPromise, viewPort, sourceCrop](renderengine::RenderEngine& instance) {
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
+                    SFTRACE_NAME("REThreaded::setViewportAndProjection");
+// QTI_BEGIN: 2024-04-09: Display: sf: extensions: Add support for fb scaling
+                    instance.setViewportAndProjection(viewPort, sourceCrop);
+                    resultPromise.set_value();
+                });
+    }
+    mCondition.notify_one();
+    resultFuture.wait();
+}
+
+// QTI_END: 2024-04-09: Display: sf: extensions: Add support for fb scaling
 } // namespace threaded
 } // namespace renderengine
 } // namespace android

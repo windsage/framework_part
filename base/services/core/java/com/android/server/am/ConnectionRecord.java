@@ -38,7 +38,7 @@ import java.io.PrintWriter;
 /**
  * Description of a single binding to a service.
  */
-final class ConnectionRecord implements OomAdjusterModernImpl.Connection{
+public final class ConnectionRecord implements OomAdjusterModernImpl.Connection{
     final AppBindRecord binding;    // The application/service binding.
     final ActivityServiceConnectionsHolder<ConnectionRecord> activity;  // If non-null, the owning activity.
     final IServiceConnection conn;  // The client connection.
@@ -142,6 +142,10 @@ final class ConnectionRecord implements OomAdjusterModernImpl.Connection{
                 | Context.BIND_BYPASS_USER_NETWORK_RESTRICTIONS);
     }
 
+    @Override
+    public boolean transmitsCpuTime() {
+        return !hasFlag(Context.BIND_ALLOW_FREEZE);
+    }
 
     public long getFlags() {
         return flags;
@@ -272,6 +276,9 @@ final class ConnectionRecord implements OomAdjusterModernImpl.Connection{
         }
         if (hasFlag(Context.BIND_INCLUDE_CAPABILITIES)) {
             sb.append("CAPS ");
+        }
+        if (hasFlag(Context.BIND_ALLOW_FREEZE)) {
+            sb.append("!CPU ");
         }
         if (serviceDead) {
             sb.append("DEAD ");

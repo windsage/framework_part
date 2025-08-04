@@ -16,6 +16,7 @@
 
 package android.view;
 
+import static android.view.flags.Flags.FLAG_DEPRECATE_SURFACE_VIEW_Z_ORDER_APIS;
 import static android.view.flags.Flags.FLAG_SURFACE_VIEW_GET_SURFACE_PACKAGE;
 import static android.view.flags.Flags.FLAG_SURFACE_VIEW_SET_COMPOSITION_ORDER;
 import static android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
@@ -812,7 +813,12 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
      * window is attached to the window manager.
      *
      * <p>Calling this overrides any previous call to {@link #setZOrderOnTop}.
+     *
+     * @deprecated Use {@link #setCompositionOrder(int)} instead. It provides more
+     * control over the Z ordering behavior.
      */
+    @Deprecated
+    @FlaggedApi(FLAG_DEPRECATE_SURFACE_VIEW_Z_ORDER_APIS)
     public void setZOrderMediaOverlay(boolean isMediaOverlay) {
         mRequestedSubLayer = isMediaOverlay
             ? APPLICATION_MEDIA_OVERLAY_SUBLAYER : APPLICATION_MEDIA_SUBLAYER;
@@ -834,7 +840,12 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
      * <p>Calling this overrides any previous call to {@link #setZOrderMediaOverlay}.
      *
      * @param onTop Whether to show the surface on top of this view's window.
+     *
+     * @deprecated Use {@link #setCompositionOrder(int)} instead. It provides more
+     * control over the Z ordering behavior.
      */
+    @Deprecated
+    @FlaggedApi(FLAG_DEPRECATE_SURFACE_VIEW_Z_ORDER_APIS)
     public void setZOrderOnTop(boolean onTop) {
         // In R and above we allow dynamic layer changes.
         final boolean allowDynamicChange = getContext().getApplicationInfo().targetSdkVersion
@@ -866,7 +877,11 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
      * @return Whether the Z ordering changed.
      *
      * @hide
+     *
+     * @deprecated Use {@link #setCompositionOrder(int)} instead. It provides more control
+     * over the Z ordering behavior.
      */
+    @Deprecated
     public boolean setZOrderedOnTop(boolean onTop, boolean allowDynamicChange) {
         final int subLayer;
         if (onTop) {
@@ -929,7 +944,6 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         updateSurface();
     }
 
-
     /**
      * Sets the desired amount of HDR headroom to be used when HDR content is presented on this
      * SurfaceView. This is expressed as the ratio of maximum HDR white point over the SDR
@@ -973,6 +987,28 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         invalidate();
     }
 
+// QTI_BEGIN: 2020-05-06: SecureSystems: SurfaceView: Add API to allow protected content presentation
+    /**
+     * Control whether the surface view's content should flow through
+     * protected hardware path to display disallowing access from non-secure
+     * execution environments.
+     *
+     * <p>Note that this must be set before the surface view's containing
+     * window is attached to the window manager.
+     *
+     * @param isProtected True if the surface view is protected.
+     *
+     * @hide
+     */
+    public void setProtected(boolean isProtected) {
+        if (isProtected) {
+            mSurfaceFlags |= SurfaceControl.PROTECTED_APP;
+        } else {
+            mSurfaceFlags &= ~SurfaceControl.PROTECTED_APP;
+        }
+    }
+
+// QTI_END: 2020-05-06: SecureSystems: SurfaceView: Add API to allow protected content presentation
     private void updateOpaqueFlag() {
         if (!PixelFormat.formatHasAlpha(mRequestedFormat)) {
             mSurfaceFlags |= SurfaceControl.OPAQUE;
@@ -1024,9 +1060,9 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
             }
 
             if (mSurfacePackage != null) {
-                mSurfaceControlViewHostParent.detach();
                 mEmbeddedWindowParams.clear();
                 if (releaseSurfacePackage) {
+                    mSurfaceControlViewHostParent.detach();
                     mSurfacePackage.release();
                     mSurfacePackage = null;
                 }
@@ -2232,6 +2268,27 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
         t.reparent(sc, mBlastSurfaceControl).show(sc);
     }
 
+    /**
+     * Populates a {@link ViewStructure} for content capture.
+     *
+     * <p>If {@link #setSecure(boolean)} has been enabled, will add a property to the
+     * {@link android.app.assist.AssistStructure.ViewNode} to indicate that content will not
+     * be available for this part of the screen.
+     *
+     * @hide
+     */
+    @Override
+    protected void onProvideStructure(@NonNull ViewStructure structure,
+            @ViewStructureType int viewFor, int flags) {
+        super.onProvideStructure(structure, viewFor, flags);
+        if (android.app.contextualsearch.flags.Flags.reportSecureSurfacesInAssistStructure()) {
+            if ((mSurfaceFlags & SurfaceControl.SECURE) != 0) {
+                structure.getExtras().putBoolean(
+                        ViewStructure.EXTRA_CONTAINS_SECURE_LAYERS, true);
+            }
+        }
+    }
+
     /** @hide */
     @Override
     public void onInitializeAccessibilityNodeInfoInternal(AccessibilityNodeInfo info) {
@@ -2390,5 +2447,10 @@ public class SurfaceView extends View implements ViewRootImpl.SurfaceChangedCall
                 break;
             }
         }
+    }
+
+    @Override
+    public CharSequence getAccessibilityClassName() {
+        return SurfaceView.class.getName();
     }
 }

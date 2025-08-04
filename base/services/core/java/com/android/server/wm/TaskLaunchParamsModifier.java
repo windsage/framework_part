@@ -96,9 +96,10 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
     }
 
     @Override
+    @Result
     public int onCalculate(@Nullable Task task, @Nullable ActivityInfo.WindowLayout layout,
             @Nullable ActivityRecord activity, @Nullable ActivityRecord source,
-            @Nullable ActivityOptions options, @Nullable Request request, int phase,
+            @Nullable ActivityOptions options, @Nullable Request request, @Phase int phase,
             LaunchParams currentParams, LaunchParams outParams) {
         initLogBuilder(task, activity);
         final int result = calculate(task, layout, activity, source, options, request, phase,
@@ -107,9 +108,10 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
         return result;
     }
 
+    @Result
     private int calculate(@Nullable Task task, @Nullable ActivityInfo.WindowLayout layout,
             @Nullable ActivityRecord activity, @Nullable ActivityRecord source,
-            @Nullable ActivityOptions options, @Nullable Request request, int phase,
+            @Nullable ActivityOptions options, @Nullable Request request, @Phase int phase,
             LaunchParams currentParams, LaunchParams outParams) {
         final ActivityRecord root;
         if (task != null) {
@@ -130,8 +132,11 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
         }
 
         // STEP 1: Determine the suggested display area to launch the activity/task.
+// QTI_BEGIN: 2024-03-28: Core: Revert PhoneLink in framework/base
         final TaskDisplayArea suggestedDisplayArea = getPreferredLaunchTaskDisplayArea(task,
+// QTI_END: 2024-03-28: Core: Revert PhoneLink in framework/base
                 options, source, currentParams, activity, request);
+
         outParams.mPreferredTaskDisplayArea = suggestedDisplayArea;
         final DisplayContent display = suggestedDisplayArea.mDisplayContent;
         if (DEBUG) {
@@ -382,7 +387,7 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
                 // an existing task.
                 adjustBoundsToAvoidConflictInDisplayArea(taskDisplayArea, outParams.mBounds);
             }
-        } else {
+        } else if (task == null || !task.hasOverrideBounds()) {
             if (source != null && source.inFreeformWindowingMode()
                     && resolvedMode == WINDOWING_MODE_FREEFORM
                     && outParams.mBounds.isEmpty()

@@ -40,8 +40,8 @@ import static android.window.ConfigurationHelper.isDifferentDisplay;
 import static android.window.ConfigurationHelper.shouldUpdateResources;
 
 import static com.android.internal.annotations.VisibleForTesting.Visibility.PACKAGE;
+import static com.android.internal.annotations.VisibleForTesting.Visibility.PRIVATE;
 import static com.android.internal.os.SafeZipPathValidatorCallback.VALIDATE_ZIP_PATH_FOR_PATH_TRAVERSAL;
-import static com.android.sdksandbox.flags.Flags.sandboxActivitySdkBasedContext;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -102,9 +102,11 @@ import android.content.pm.PermissionInfo;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ProviderInfoList;
 import android.content.pm.ServiceInfo;
+import android.content.pm.SystemFeaturesCache;
 import android.content.res.AssetManager;
 import android.content.res.CompatibilityInfo;
 import android.content.res.Configuration;
+import android.content.res.ResourceTimer;
 import android.content.res.Resources;
 import android.content.res.ResourcesImpl;
 import android.content.res.loader.ResourcesLoader;
@@ -115,6 +117,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.HardwareRenderer;
 import android.graphics.Typeface;
+import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManagerGlobal;
 import android.media.MediaFrameworkInitializer;
 import android.media.MediaFrameworkPlatformInitializer;
@@ -190,6 +193,9 @@ import android.system.StructStat;
 import android.telephony.TelephonyFrameworkInitializer;
 import android.util.AndroidRuntimeException;
 import android.util.ArrayMap;
+// QTI_BEGIN: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+import android.util.BoostFramework;
+// QTI_END: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
 import android.util.DisplayMetrics;
 import android.util.EventLog;
 import android.util.Log;
@@ -272,6 +278,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Executable;
 import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.nio.file.DirectoryStream;
@@ -387,7 +394,7 @@ public final class ActivityThread extends ClientTransactionHandler
     @UnsupportedAppUsage
     private ContextImpl mSystemContext;
     @GuardedBy("this")
-    private ArrayList<WeakReference<ContextImpl>> mDisplaySystemUiContexts;
+    private ArrayList<WeakReference<Context>> mDisplaySystemUiContexts;
 
     @UnsupportedAppUsage
     static volatile IPackageManager sPackageManager;
@@ -861,7 +868,8 @@ public final class ActivityThread extends ClientTransactionHandler
         }
     }
 
-    static final class ReceiverData extends BroadcastReceiver.PendingResult {
+    @VisibleForTesting(visibility = PACKAGE)
+    public static final class ReceiverData extends BroadcastReceiver.PendingResult {
         public ReceiverData(Intent intent, int resultCode, String resultData, Bundle resultExtras,
                 boolean ordered, boolean sticky, boolean assumeDelivered, IBinder token,
                 int sendingUser, int sendingUid, String sendingPackage) {
@@ -869,6 +877,11 @@ public final class ActivityThread extends ClientTransactionHandler
                     assumeDelivered, token, sendingUser, intent.getFlags(), sendingUid,
                     sendingPackage);
             this.intent = intent;
+            if (com.android.window.flags.Flags.supportWidgetIntentsOnConnectedDisplay()) {
+                mOptions = ActivityOptions.fromBundle(resultExtras);
+            } else {
+                mOptions = null;
+            }
         }
 
         @UnsupportedAppUsage
@@ -877,12 +890,16 @@ public final class ActivityThread extends ClientTransactionHandler
         ActivityInfo info;
         @UnsupportedAppUsage
         CompatibilityInfo compatInfo;
+        @Nullable
+        final ActivityOptions mOptions;
+
         public String toString() {
             return "ReceiverData{intent=" + intent + " packageName=" +
                     info.packageName + " resultCode=" + getResultCode()
                     + " resultData=" + getResultData() + " resultExtras="
                     + getResultExtras(false) + " sentFromUid="
-                    + getSentFromUid() + " sentFromPackage=" + getSentFromPackage() + "}";
+                    + getSentFromUid() + " sentFromPackage=" + getSentFromPackage()
+                    + " mOptions=" + mOptions + "}";
         }
     }
 
@@ -1349,6 +1366,10 @@ public final class ActivityThread extends ClientTransactionHandler
                 ApplicationSharedMemory instance =
                         ApplicationSharedMemory.fromFileDescriptor(
                                 applicationSharedMemoryFd, /* mutable= */ false);
+                if (android.content.pm.Flags.cacheSdkSystemFeatures()) {
+                    SystemFeaturesCache.setInstance(
+                            new SystemFeaturesCache(instance.readSystemFeaturesCache()));
+                }
                 instance.closeFileDescriptor();
                 ApplicationSharedMemory.setInstance(instance);
             }
@@ -1989,8 +2010,12 @@ public final class ActivityThread extends ClientTransactionHandler
 
         @Override
         public void dumpCacheInfo(ParcelFileDescriptor pfd, String[] args) {
-            PropertyInvalidatedCache.dumpCacheInfo(pfd, args);
-            IoUtils.closeQuietly(pfd);
+            try {
+                PropertyInvalidatedCache.dumpCacheInfo(pfd, args);
+                BroadcastStickyCache.dumpCacheInfo(pfd);
+            } finally {
+                IoUtils.closeQuietly(pfd);
+            }
         }
 
         private File getDatabasesDir(Context context) {
@@ -2259,10 +2284,16 @@ public final class ActivityThread extends ClientTransactionHandler
         public void getExecutableMethodFileOffsets(
                 @NonNull MethodDescriptor methodDescriptor,
                 @NonNull IOffsetCallback resultCallback) {
-            Method method = MethodDescriptorParser.parseMethodDescriptor(
+            Executable executable = MethodDescriptorParser.parseMethodDescriptor(
                     getClass().getClassLoader(), methodDescriptor);
-            VMDebug.ExecutableMethodFileOffsets location =
-                    VMDebug.getExecutableMethodFileOffsets(method);
+            VMDebug.ExecutableMethodFileOffsets location;
+            if (com.android.art.flags.Flags.executableMethodFileOffsetsV2()) {
+                location = VMDebug.getExecutableMethodFileOffsets(executable);
+            } else if (executable instanceof Method) {
+                location = VMDebug.getExecutableMethodFileOffsets((Method) executable);
+            } else {
+                throw new UnsupportedOperationException();
+            }
             try {
                 if (location == null) {
                     resultCallback.onResult(null);
@@ -3222,7 +3253,7 @@ public final class ActivityThread extends ClientTransactionHandler
     }
 
     @NonNull
-    public ContextImpl getSystemUiContext() {
+    public Context getSystemUiContext() {
         return getSystemUiContext(DEFAULT_DISPLAY);
     }
 
@@ -3232,7 +3263,7 @@ public final class ActivityThread extends ClientTransactionHandler
      * @see ContextImpl#createSystemUiContext(ContextImpl, int)
      */
     @NonNull
-    public ContextImpl getSystemUiContext(int displayId) {
+    public Context getSystemUiContext(int displayId) {
         synchronized (this) {
             if (mDisplaySystemUiContexts == null) {
                 mDisplaySystemUiContexts = new ArrayList<>();
@@ -3240,7 +3271,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
             mDisplaySystemUiContexts.removeIf(contextRef -> contextRef.refersTo(null));
 
-            ContextImpl context = getSystemUiContextNoCreateLocked(displayId);
+            Context context = getSystemUiContextNoCreateLocked(displayId);
             if (context != null) {
                 return context;
             }
@@ -3251,9 +3282,20 @@ public final class ActivityThread extends ClientTransactionHandler
         }
     }
 
+    /**
+     * Creates a {@code SystemUiContext} for testing.
+     * <p>
+     * DO NOT use it in production code.
+     */
+    @VisibleForTesting
+    @NonNull
+    public Context createSystemUiContextForTesting(int displayId) {
+        return ContextImpl.createSystemUiContext(getSystemContext(), displayId);
+    }
+
     @Nullable
     @Override
-    public ContextImpl getSystemUiContextNoCreate() {
+    public Context getSystemUiContextNoCreate() {
         synchronized (this) {
             if (mDisplaySystemUiContexts == null) {
                 return null;
@@ -3264,9 +3306,9 @@ public final class ActivityThread extends ClientTransactionHandler
 
     @GuardedBy("this")
     @Nullable
-    private ContextImpl getSystemUiContextNoCreateLocked(int displayId) {
+    private Context getSystemUiContextNoCreateLocked(int displayId) {
         for (int i = 0; i < mDisplaySystemUiContexts.size(); i++) {
-            ContextImpl context = mDisplaySystemUiContexts.get(i).get();
+            Context context = mDisplaySystemUiContexts.get(i).get();
             if (context != null && context.getDisplayId() == displayId) {
                 return context;
             }
@@ -3285,7 +3327,8 @@ public final class ActivityThread extends ClientTransactionHandler
     public void installSystemApplicationInfo(ApplicationInfo info, ClassLoader classLoader) {
         synchronized (this) {
             getSystemContext().installSystemApplicationInfo(info, classLoader);
-            getSystemUiContext().installSystemApplicationInfo(info, classLoader);
+            final ContextImpl sysUiContextImpl = ContextImpl.getImpl(getSystemUiContext());
+            sysUiContextImpl.installSystemApplicationInfo(info, classLoader);
 
             // give ourselves a default profiler
             mProfiler = new Profiler();
@@ -3974,14 +4017,28 @@ public final class ActivityThread extends ClientTransactionHandler
                         + (fromIpc ? " (from ipc" : ""));
             }
         }
+        if (Trace.isTagEnabled(Trace.TRACE_TAG_ACTIVITY_MANAGER)) {
+            Trace.instant(Trace.TRACE_TAG_ACTIVITY_MANAGER,
+                    "updateProcessState: processState=" + processState);
+        }
     }
 
     /** Converts a process state to a VM process state. */
     private static int toVmProcessState(int processState) {
-        final int state = ActivityManager.isProcStateJankPerceptible(processState)
-                ? VM_PROCESS_STATE_JANK_PERCEPTIBLE
-                : VM_PROCESS_STATE_JANK_IMPERCEPTIBLE;
-        return state;
+        if (ActivityManager.isProcStateJankPerceptible(processState)) {
+            return VM_PROCESS_STATE_JANK_PERCEPTIBLE;
+        }
+
+        if (Flags.jankPerceptibleNarrow() && !Flags.jankPerceptibleNarrowHoldback()) {
+            // Unlike other persistent processes, system server is often on
+            // the critical path for application startup. Mark it explicitly
+            // as jank perceptible regardless of processState.
+            if (isSystem()) {
+                return VM_PROCESS_STATE_JANK_PERCEPTIBLE;
+            }
+        }
+
+        return VM_PROCESS_STATE_JANK_IMPERCEPTIBLE;
     }
 
     /** Update VM state based on ActivityManager.PROCESS_STATE_* constants. */
@@ -4090,9 +4147,7 @@ public final class ActivityThread extends ClientTransactionHandler
                     r.activityInfo.targetActivity);
         }
 
-        boolean isSandboxActivityContext =
-                sandboxActivitySdkBasedContext()
-                        && SdkSandboxActivityAuthority.isSdkSandboxActivityIntent(
+        boolean isSandboxActivityContext = SdkSandboxActivityAuthority.isSdkSandboxActivityIntent(
                                 mSystemContext, r.intent);
         boolean isSandboxedSdkContextUsed = false;
         ContextImpl activityBaseContext;
@@ -4752,6 +4807,7 @@ public final class ActivityThread extends ClientTransactionHandler
     }
 
     private void reportSplashscreenViewShown(IBinder token, SplashScreenView view) {
+        Trace.instant(Trace.TRACE_TAG_VIEW, "reportSplashscreenViewShown");
         ActivityClient.getInstance().reportSplashScreenAttached(token);
         synchronized (this) {
             if (mSplashScreenGlobal != null) {
@@ -4768,11 +4824,34 @@ public final class ActivityThread extends ClientTransactionHandler
         // frame.
         final SurfaceControl.Transaction transaction = new SurfaceControl.Transaction();
         transaction.hide(startingWindowLeash);
+        startingWindowLeash.release();
 
-        decorView.getViewRootImpl().applyTransactionOnDraw(transaction);
         view.syncTransferSurfaceOnDraw();
-        // Tell server we can remove the starting window
-        decorView.postOnAnimation(() -> reportSplashscreenViewShown(token, view));
+
+        if (com.android.window.flags.Flags.useRtFrameCallbackForSplashScreenTransfer()
+                && decorView.isHardwareAccelerated()) {
+            decorView.getViewRootImpl().registerRtFrameCallback(
+                    new HardwareRenderer.FrameDrawingCallback() {
+                        @Override
+                        public void onFrameDraw(long frame) { }
+                        @Override
+                        public HardwareRenderer.FrameCommitCallback onFrameDraw(
+                                int syncResult, long frame) {
+                            return didProduceBuffer -> {
+                                Trace.instant(Trace.TRACE_TAG_VIEW, "transferSplashscreenView");
+                                transaction.apply();
+                                // Tell server we can remove the starting window after frame commit.
+                                decorView.postOnAnimation(() ->
+                                        reportSplashscreenViewShown(token, view));
+                            };
+                        }
+                    });
+        } else {
+            Trace.instant(Trace.TRACE_TAG_VIEW, "transferSplashscreenView_software");
+            decorView.getViewRootImpl().applyTransactionOnDraw(transaction);
+            // Tell server we can remove the starting window after frame commit.
+            decorView.postOnAnimation(() -> reportSplashscreenViewShown(token, view));
+        }
     }
 
     /**
@@ -4921,6 +5000,7 @@ public final class ActivityThread extends ClientTransactionHandler
                 final String attributionTag = data.info.attributionTags[0];
                 context = (ContextImpl) context.createAttributionContext(attributionTag);
             }
+            context = (ContextImpl) createDisplayContextIfNeeded(context, data);
             java.lang.ClassLoader cl = context.getClassLoader();
             data.intent.setExtrasClassLoader(cl);
             data.intent.prepareToEnterProcess(
@@ -4967,6 +5047,54 @@ public final class ActivityThread extends ClientTransactionHandler
         if (receiver.getPendingResult() != null) {
             data.finish();
         }
+    }
+
+    /**
+     * Creates a display context if the broadcast was initiated with a launch display ID.
+     *
+     * <p>When a broadcast initiates from a widget on a secondary display, the originating
+     * display ID is included as an extra in the intent. This is accomplished by
+     * {@link PendingIntentRecord#createSafeActivityOptionsBundle}, which transfers the launch
+     * display ID from ActivityOptions into the intent's extras bundle. This method checks for
+     * the presence of that extra and creates a display context associated with the initiated
+     * display if it exists. This ensures that when the {@link BroadcastReceiver} invokes
+     * {@link Context#startActivity(Intent)}, the activity is launched on the correct display.
+     *
+     * @param context The original context of the receiver.
+     * @param data    The {@link ReceiverData} containing optional display information.
+     * @return A display context if applicable; otherwise the original context.
+     */
+    @NonNull
+    @VisibleForTesting(visibility = PRIVATE)
+    public Context createDisplayContextIfNeeded(@NonNull Context context,
+            @NonNull ReceiverData data) {
+        if (!com.android.window.flags.Flags.supportWidgetIntentsOnConnectedDisplay()) {
+            return context;
+        }
+
+        final ActivityOptions options = data.mOptions;
+        if (options == null) {
+            return context;
+        }
+
+        final int launchDisplayId = options.getLaunchDisplayId();
+        if (launchDisplayId == INVALID_DISPLAY) {
+            return context;
+        }
+
+        final DisplayManager dm = context.getSystemService(DisplayManager.class);
+        if (dm == null) {
+            return context;
+        }
+
+        final Display display = dm.getDisplay(launchDisplayId);
+        if (display == null) {
+            Slog.w(TAG, "Unable to create a display context for nonexistent display "
+                    + launchDisplayId);
+            return context;
+        }
+
+        return context.createDisplayContext(display);
     }
 
     // Instantiate a BackupAgent and tell it that it's alive
@@ -5271,6 +5399,7 @@ public final class ActivityThread extends ClientTransactionHandler
 
             Resources.dumpHistory(pw, "");
             pw.flush();
+            ResourceTimer.dumpTimers(info.fd.getFileDescriptor(), "-refresh");
             if (info.finishCallback != null) {
                 info.finishCallback.sendResult(null);
             }
@@ -7116,12 +7245,9 @@ public final class ActivityThread extends ClientTransactionHandler
             System.runFinalization();
             System.gc();
         }
-        if (dhd.dumpBitmaps != null) {
-            Bitmap.dumpAll(dhd.dumpBitmaps);
-        }
         try (ParcelFileDescriptor fd = dhd.fd) {
             if (dhd.managed) {
-                Debug.dumpHprofData(dhd.path, fd.getFileDescriptor());
+                Debug.dumpHprofData(dhd.path, fd.getFileDescriptor(), dhd.dumpBitmaps);
             } else if (dhd.mallocInfo) {
                 Debug.dumpNativeMallocInfo(fd.getFileDescriptor());
             } else {
@@ -7145,9 +7271,6 @@ public final class ActivityThread extends ClientTransactionHandler
         }
         if (dhd.finishCallback != null) {
             dhd.finishCallback.sendResult(null);
-        }
-        if (dhd.dumpBitmaps != null) {
-            Bitmap.dumpAll(null); // clear dump
         }
     }
 
@@ -7314,16 +7437,6 @@ public final class ActivityThread extends ClientTransactionHandler
         }
 
         WindowManagerGlobal.getInstance().trimMemory(level);
-
-        if (SystemProperties.getInt("debug.am.run_gc_trim_level", Integer.MAX_VALUE) <= level) {
-            unscheduleGcIdler();
-            doGcIfNeeded("tm");
-        }
-        if (SystemProperties.getInt("debug.am.run_mallopt_trim_level", Integer.MAX_VALUE)
-                <= level) {
-            unschedulePurgeIdler();
-            purgePendingResources();
-        }
     }
 
     private void setupGraphicsSupport(Context context) {
@@ -7404,6 +7517,10 @@ public final class ActivityThread extends ClientTransactionHandler
 
     @UnsupportedAppUsage
     private void handleBindApplication(AppBindData data) {
+// QTI_BEGIN: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+        long st_bindApp = SystemClock.uptimeMillis();
+        BoostFramework ux_perf = null;
+// QTI_END: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
         mDdmSyncStageUpdater.next(Stage.Bind);
 
         // Register the UI Thread as a sensitive thread to the runtime.
@@ -7537,10 +7654,21 @@ public final class ActivityThread extends ClientTransactionHandler
         /**
          * Switch this process to density compatibility mode if needed.
          */
-        if ((data.appInfo.flags&ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES)
+// QTI_BEGIN: 2018-02-20: Performance: Activity Trigger frameworks support
+        if ((data.appInfo.flags & ApplicationInfo.FLAG_SUPPORTS_SCREEN_DENSITIES)
+// QTI_END: 2018-02-20: Performance: Activity Trigger frameworks support
                 == 0) {
             mDensityCompatMode = true;
             Bitmap.setDefaultDensity(DisplayMetrics.DENSITY_DEFAULT);
+// QTI_BEGIN: 2018-02-20: Performance: Activity Trigger frameworks support
+        } else {
+            int overrideDensity = data.appInfo.getOverrideDensity();
+            if(overrideDensity != 0) {
+                Log.d(TAG, "override app density from " + DisplayMetrics.DENSITY_DEVICE + " to " + overrideDensity);
+                mDensityCompatMode = true;
+                Bitmap.setDefaultDensity(overrideDensity);
+            }
+// QTI_END: 2018-02-20: Performance: Activity Trigger frameworks support
         }
         mConfigurationController.updateDefaultDensity(data.config.densityDpi);
 
@@ -7614,6 +7742,25 @@ public final class ActivityThread extends ClientTransactionHandler
             Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
         }
 
+// QTI_BEGIN: 2018-10-31: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+        if (!Process.isIsolated()) {
+// QTI_END: 2018-10-31: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+// QTI_BEGIN: 2018-11-22: Performance: framework: Adding temporary disk access for Boostframework
+            final int old_mask = StrictMode.allowThreadDiskWritesMask();
+            try {
+// QTI_END: 2018-11-22: Performance: framework: Adding temporary disk access for Boostframework
+// QTI_BEGIN: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+                ux_perf = new BoostFramework(appContext);
+// QTI_END: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+// QTI_BEGIN: 2018-11-22: Performance: framework: Adding temporary disk access for Boostframework
+            } finally {
+                 StrictMode.setThreadPolicyMask(old_mask);
+            }
+// QTI_END: 2018-11-22: Performance: framework: Adding temporary disk access for Boostframework
+// QTI_BEGIN: 2018-10-31: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+        }
+
+// QTI_END: 2018-10-31: Core: IOP/UXE: This change is related to IOP and UXE Feature.
         if (!Process.isIsolated()) {
             final int oldMask = StrictMode.allowThreadDiskWritesMask();
             try {
@@ -7755,6 +7902,39 @@ public final class ActivityThread extends ClientTransactionHandler
                 throw e.rethrowFromSystemServer();
             }
         }
+// QTI_BEGIN: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+        long end_bindApp = SystemClock.uptimeMillis();
+        int bindApp_dur = (int) (end_bindApp - st_bindApp);
+        String pkg_name = null;
+        if (appContext != null) {
+            pkg_name = appContext.getPackageName();
+        }
+        if (ux_perf != null && !Process.isIsolated() && pkg_name != null) {
+// QTI_END: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+// QTI_BEGIN: 2019-05-30: Performance: Perf: Change for AGPE
+            String pkgDir = null;
+            try
+            {
+                String codePath = appContext.getPackageCodePath();
+                pkgDir =  codePath.substring(0, codePath.lastIndexOf('/'));
+            }
+            catch(Exception e)
+            {
+                Slog.e(TAG, "HeavyGameThread () : Exception_1 = " + e);
+            }
+// QTI_END: 2019-05-30: Performance: Perf: Change for AGPE
+            if (ux_perf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                ux_perf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                ux_perf.perfUXEngine_events(BoostFramework.UXE_EVENT_BINDAPP, 0,
+                                               pkg_name,
+                                               bindApp_dur,
+                                               pkgDir);
+            } else {
+                ux_perf.perfEvent(BoostFramework.VENDOR_HINT_BINDAPP, pkg_name, 2, bindApp_dur, 0);
+            }
+// QTI_BEGIN: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
+        }
+// QTI_END: 2018-12-02: Core: IOP/UXE: This change is related to IOP and UXE Feature.
 
         try {
             mgr.finishAttachApplication(mStartSeq, timestampApplicationOnCreateNs);
@@ -7782,9 +7962,10 @@ public final class ActivityThread extends ClientTransactionHandler
 
         // Register callback to report native memory metrics post GC cleanup
         // Note: we do not report memory metrics of isolated processes unless
-        // their native allocations become more significant
-        if (!Process.isIsolated() && Flags.reportPostgcMemoryMetrics() &&
-            com.android.libcore.readonly.Flags.postCleanupApis()) {
+        // their native allocations become more significant. Instrumentation is
+        // also excluded because the metrics from test cases are not meaningful.
+        if (!Process.isIsolated() && ii == null && Flags.reportPostgcMemoryMetrics()
+                && com.android.libcore.readonly.Flags.postCleanupApis()) {
             VMRuntime.addPostCleanupCallback(new Runnable() {
                 @Override public void run() {
                     MetricsLoggerWrapper.logPostGcMemorySnapshot();

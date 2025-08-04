@@ -48,7 +48,6 @@ cc_library_shared {
         "libmemevents",
         "libmeminfo",
         "libnativehelper",
-        "libnetutils",
         "libprocessgroup",
         "libutils",
         "libcutils",

@@ -32,6 +32,10 @@
 #include <utils/String8.h>
 #include <utils/Trace.h>
 
+// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+#include "../QtiExtension/QtiEglConsumerExtension.h"
+
+// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
 #define PROT_CONTENT_EXT_STR "EGL_EXT_protected_content"
 #define EGL_PROTECTED_CONTENT_EXT 0x32C0
 
@@ -221,7 +225,11 @@ void EGLConsumer::onAcquireBufferLocked(BufferItem* item, SurfaceTexture& st) {
 }
 
 void EGLConsumer::onReleaseBufferLocked(int buf) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+    (void)buf;
+#else
     mEglSlots[buf].mEglFence = EGL_NO_SYNC_KHR;
+#endif
 }
 
 status_t EGLConsumer::updateAndReleaseLocked(const BufferItem& item, PendingRelease* pendingRelease,
@@ -283,10 +291,15 @@ status_t EGLConsumer::updateAndReleaseLocked(const BufferItem& item, PendingRele
     // release old buffer
     if (st.mCurrentTexture != BufferQueue::INVALID_BUFFER_SLOT) {
         if (pendingRelease == nullptr) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+            status_t status = st.releaseBufferLocked(st.mCurrentTexture,
+                                                     mCurrentTextureImage->graphicBuffer());
+#else
             status_t status =
                     st.releaseBufferLocked(st.mCurrentTexture,
                                            mCurrentTextureImage->graphicBuffer(), mEglDisplay,
                                            mEglSlots[st.mCurrentTexture].mEglFence);
+#endif
             if (status < NO_ERROR) {
                 EGC_LOGE("updateAndRelease: failed to release buffer: %s (%d)", strerror(-status),
                          status);
@@ -296,8 +309,6 @@ status_t EGLConsumer::updateAndReleaseLocked(const BufferItem& item, PendingRele
         } else {
             pendingRelease->currentTexture = st.mCurrentTexture;
             pendingRelease->graphicBuffer = mCurrentTextureImage->graphicBuffer();
-            pendingRelease->display = mEglDisplay;
-            pendingRelease->fence = mEglSlots[st.mCurrentTexture].mEglFence;
             pendingRelease->isPending = true;
         }
     }
@@ -502,6 +513,11 @@ status_t EGLConsumer::syncForReleaseLocked(EGLDisplay dpy, SurfaceTexture& st) {
                 return err;
             }
         } else if (st.mUseFenceSync && SyncFeatures::getInstance().useFenceSync()) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
+            // Basically all clients are using native fence syncs. If they aren't, we lose nothing
+            // by waiting here, because the alternative can cause deadlocks (b/339705065).
+            glFinish();
+#else
             EGLSyncKHR fence = mEglSlots[st.mCurrentTexture].mEglFence;
             if (fence != EGL_NO_SYNC_KHR) {
                 // There is already a fence for the current slot.  We need to
@@ -531,6 +547,7 @@ status_t EGLConsumer::syncForReleaseLocked(EGLDisplay dpy, SurfaceTexture& st) {
             }
             glFlush();
             mEglSlots[st.mCurrentTexture].mEglFence = fence;
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_GL_FENCE_CLEANUP)
         }
     }
 
@@ -603,7 +620,11 @@ void EGLConsumer::onAbandonLocked() {
 }
 
 EGLConsumer::EglImage::EglImage(sp<GraphicBuffer> graphicBuffer)
-      : mGraphicBuffer(graphicBuffer), mEglImage(EGL_NO_IMAGE_KHR), mEglDisplay(EGL_NO_DISPLAY) {}
+// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+      : mGraphicBuffer(graphicBuffer), mEglImage(EGL_NO_IMAGE_KHR), mEglDisplay(EGL_NO_DISPLAY) {
+    mQtiEglImageExtn = std::make_shared<android::libnativedisplay::QtiEglImageExtension>(this);
+}
+// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
 
 EGLConsumer::EglImage::~EglImage() {
     if (mEglImage != EGL_NO_IMAGE_KHR) {
@@ -618,7 +639,13 @@ status_t EGLConsumer::EglImage::createIfNeeded(EGLDisplay eglDisplay, bool force
     // If there's an image and it's no longer valid, destroy it.
     bool haveImage = mEglImage != EGL_NO_IMAGE_KHR;
     bool displayInvalid = mEglDisplay != eglDisplay;
-    if (haveImage && (displayInvalid || forceCreation)) {
+// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+
+    bool qtiDataSpaceChanged = mQtiEglImageExtn->dataSpaceChanged();
+
+    if (haveImage && (displayInvalid || forceCreation ||
+            qtiDataSpaceChanged)) {
+// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
         if (!eglDestroyImageKHR(mEglDisplay, mEglImage)) {
             ALOGE("createIfNeeded: eglDestroyImageKHR failed");
         }
@@ -643,6 +670,12 @@ status_t EGLConsumer::EglImage::createIfNeeded(EGLDisplay eglDisplay, bool force
         return UNKNOWN_ERROR;
     }
 
+// QTI_BEGIN: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
+    if (qtiDataSpaceChanged) {
+        mQtiEglImageExtn->setDataSpace();
+    }
+
+// QTI_END: 2024-02-27: Graphics: nativedisplay: fix video call flicker issue
     return OK;
 }
 

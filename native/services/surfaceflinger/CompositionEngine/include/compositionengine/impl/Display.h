@@ -46,6 +46,7 @@ public:
 
     // compositionengine::Output overrides
     ftl::Optional<DisplayId> getDisplayId() const override;
+    ftl::Optional<DisplayIdVariant> getDisplayIdVariant() const override;
     bool isValid() const override;
     void dump(std::string&) const override;
     using compositionengine::impl::Output::setReleasedLayers;
@@ -67,7 +68,9 @@ public:
 
     // compositionengine::Display overrides
     DisplayId getId() const override;
+    bool hasSecureLayers() const override;
     bool isSecure() const override;
+    void setSecure(bool secure) override;
     bool isVirtual() const override;
     void disconnect() override;
     void createDisplayColorProfile(
@@ -75,7 +78,6 @@ public:
     void createRenderSurface(const compositionengine::RenderSurfaceCreationArgs&) override;
     void createClientCompositionCache(uint32_t cacheSize) override;
     void applyDisplayBrightness(bool applyImmediately) override;
-    void setSecure(bool secure) override;
 
     // Internal helpers used by chooseCompositionStrategy()
     using ChangedTypes = android::HWComposer::DeviceRequestedChanges::ChangedTypes;
@@ -94,6 +96,11 @@ public:
     virtual void setConfiguration(const compositionengine::DisplayCreationArgs&);
     std::unique_ptr<compositionengine::OutputLayer> createOutputLayer(const sp<LayerFE>&) const;
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    void qtiBeginDraw();
+    void qtiEndDraw();
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 private:
     bool isPowerHintSessionEnabled() override;
     bool isPowerHintSessionGpuReportingEnabled() override;
@@ -104,10 +111,20 @@ private:
             override;
     bool hasPictureProcessing() const override;
     int32_t getMaxLayerPictureProfiles() const override;
+    bool isGpuVirtualDisplay() const {
+        return std::holds_alternative<GpuVirtualDisplayId>(mIdVariant);
+    }
 
-    DisplayId mId;
+    DisplayIdVariant mIdVariant;
     bool mIsDisconnected = false;
     adpf::PowerAdvisor* mPowerAdvisor = nullptr;
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+
+    bool mQtiIsColorModeChanged = false;
+    ColorProfile mQtiColorProfile = {ui::ColorMode::NATIVE, ui::Dataspace::UNKNOWN,
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+                                     ui::RenderIntent::COLORIMETRIC};
+
     bool mHasPictureProcessing = false;
     int32_t mMaxLayerPictureProfiles = 0;
 };

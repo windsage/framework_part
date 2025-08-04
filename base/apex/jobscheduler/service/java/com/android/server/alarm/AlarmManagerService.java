@@ -96,6 +96,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManagerInternal;
 import android.content.pm.UserPackage;
+import android.content.res.Resources;
 import android.net.Uri;
 import android.os.BatteryManager;
 import android.os.BatteryStatsInternal;
@@ -191,7 +192,11 @@ import java.util.TimeZone;
 import java.util.TreeSet;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Predicate;
-
+//T-HUB Core[SPD]: add by na.liu 20230421 start
+import java.util.List;
+import com.transsion.hubcore.server.alarm.ITranAlarmManagerService;
+import com.transsion.hubcore.griffin.ITranGriffinFeature;
+//T-HUB Core[SPD]: add by na.liu 20230421 end
 /**
  * Alarm manager implementation.
  *
@@ -1784,7 +1789,8 @@ public class AlarmManagerService extends SystemService {
         mActivityManagerInternal = LocalServices.getService(ActivityManagerInternal.class);
 
         mStartUserBeforeScheduledAlarms = Flags.startUserBeforeScheduledAlarms()
-                && UserManager.supportsMultipleUsers();
+                && UserManager.supportsMultipleUsers() && Resources.getSystem().getBoolean(
+                com.android.internal.R.bool.config_allowAlarmsOnStoppedUsers);
         if (mStartUserBeforeScheduledAlarms) {
             mUserWakeupStore = new UserWakeupStore();
             mUserWakeupStore.init();
@@ -2992,6 +2998,8 @@ public class AlarmManagerService extends SystemService {
             pw.increaseIndent();
             pw.print(Flags.FLAG_START_USER_BEFORE_SCHEDULED_ALARMS,
                     Flags.startUserBeforeScheduledAlarms());
+            pw.println();
+            pw.print(Flags.FLAG_ACQUIRE_WAKELOCK_BEFORE_SEND, Flags.acquireWakelockBeforeSend());
             pw.println();
             pw.decreaseIndent();
             pw.println();
@@ -4315,6 +4323,9 @@ public class AlarmManagerService extends SystemService {
                     mActivityManagerInternal.noteAlarmStart(alarm.operation, alarm.workSource,
                             alarm.uid, alarm.statsTag);
                 }
+                //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 start
+                ITranAlarmManagerService.Instance().hookAlarmStart(alarm.type, alarm.uid, alarm.packageName, alarm.statsTag);
+                //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 end
                 mDeliveryTracker.deliverLocked(alarm, nowELAPSED);
             } catch (RuntimeException e) {
                 Slog.w(TAG, "Failure sending alarm.", e);
@@ -5332,6 +5343,18 @@ public class AlarmManagerService extends SystemService {
         public void deliverLocked(Alarm alarm, long nowELAPSED) {
             final long workSourceToken = ThreadLocalWorkSource.setUid(
                     getAlarmAttributionUid(alarm));
+
+            if (Flags.acquireWakelockBeforeSend()) {
+                // Acquire the wakelock before starting the app. This needs to be done to avoid
+                // random stalls in the receiving app in case a suspend attempt is already in
+                // progress. See b/391413964 for an incident where this was found to happen.
+                if (mBroadcastRefCount == 0) {
+                    setWakelockWorkSource(alarm.workSource, alarm.creatorUid, alarm.statsTag, true);
+                    mWakeLock.acquire();
+                    mHandler.obtainMessage(AlarmHandler.REPORT_ALARMS_ACTIVE, 1, 0).sendToTarget();
+                }
+            }
+
             try {
                 if (alarm.operation != null) {
                     // PendingIntent alarm
@@ -5353,6 +5376,11 @@ public class AlarmManagerService extends SystemService {
                         // to do any wakelock or stats tracking, so we have nothing
                         // left to do here but go on to the next thing.
                         mSendFinishCount++;
+                        if (Flags.acquireWakelockBeforeSend() && mBroadcastRefCount == 0) {
+                            // No other alarms are in-flight and this dispatch failed. We will
+                            // acquire the wakelock again before the next dispatch.
+                            mWakeLock.release();
+                        }
                         return;
                     }
                 } else {
@@ -5390,6 +5418,11 @@ public class AlarmManagerService extends SystemService {
                         // stats management to do.  It threw before we posted the delayed
                         // timeout message, so we're done here.
                         mListenerFinishCount++;
+                        if (Flags.acquireWakelockBeforeSend() && mBroadcastRefCount == 0) {
+                            // No other alarms are in-flight and this dispatch failed. We will
+                            // acquire the wakelock again before the next dispatch.
+                            mWakeLock.release();
+                        }
                         return;
                     }
                 }
@@ -5397,14 +5430,16 @@ public class AlarmManagerService extends SystemService {
                 ThreadLocalWorkSource.restore(workSourceToken);
             }
 
-            // The alarm is now in flight; now arrange wakelock and stats tracking
             if (DEBUG_WAKELOCK) {
                 Slog.d(TAG, "mBroadcastRefCount -> " + (mBroadcastRefCount + 1));
             }
-            if (mBroadcastRefCount == 0) {
-                setWakelockWorkSource(alarm.workSource, alarm.creatorUid, alarm.statsTag, true);
-                mWakeLock.acquire();
-                mHandler.obtainMessage(AlarmHandler.REPORT_ALARMS_ACTIVE, 1, 0).sendToTarget();
+            if (!Flags.acquireWakelockBeforeSend()) {
+                // The alarm is now in flight; now arrange wakelock and stats tracking
+                if (mBroadcastRefCount == 0) {
+                    setWakelockWorkSource(alarm.workSource, alarm.creatorUid, alarm.statsTag, true);
+                    mWakeLock.acquire();
+                    mHandler.obtainMessage(AlarmHandler.REPORT_ALARMS_ACTIVE, 1, 0).sendToTarget();
+                }
             }
             final InFlight inflight = new InFlight(AlarmManagerService.this, alarm, nowELAPSED);
             mInFlight.add(inflight);

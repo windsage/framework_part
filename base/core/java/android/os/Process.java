@@ -1167,6 +1167,79 @@ public class Process {
     public static final native void setProcessGroup(int pid, int group)
             throws IllegalArgumentException, SecurityException;
 
+
+    //SPD: add boost_cpu for ADJHBSY-7559 by fan.feng1 20230602 start
+    /**
+     * Sets the scheduling group and the corresponding cpuset cpuboost group
+     * @hide
+     * @param tid The identifier of the thread to change.
+     *
+     * @throws IllegalArgumentException Throws IllegalArgumentException if
+     * <var>tid</var> does not exist.
+     * @throws SecurityException Throws SecurityException if your process does
+     * not have permission to modify the given thread, or to use the given
+     * priority.
+     */
+    public static final native void setThreadGroupAndAnimboost(int tid)
+            throws IllegalArgumentException, SecurityException;
+    //SPD: add boost_cpu for ADJHBSY-7559 by fan.feng1 20230602 end
+
+    //SPD: add cgourp control for ADJHBSY-7559 by sifeng.tian 20231127 start
+    /**
+     * Sets the scheduling group
+     * @hide
+     * @param tid The identifier of the thread to change.
+     * @param profiles The des profiles name of the thread to change.
+     * @throws IllegalArgumentException Throws IllegalArgumentException if
+     * <var>tid</var> does not exist.
+     * @throws SecurityException Throws SecurityException if your process does
+     * not have permission to modify the given thread, or to use the given
+     * priority.
+     */
+    public static final native void setThreadGroupByProfiles(int tid, String[] profiles)
+            throws IllegalArgumentException, SecurityException;
+
+    /**
+     * Sets the scheduling process sched_setaffinity
+     * @hide
+     * @param tid The identifier of the thread to change.
+     * @param mask the thread to change cpumask.
+     * @throws IllegalArgumentException Throws IllegalArgumentException if
+     * <var>tid mask</var> does not exist.
+     * @throws SecurityException Throws SecurityException if your process does
+     * not have permission to modify the given thread, or to use the mask
+     */
+    public static final native void setThreadAffinity(int pid, int mask)
+            throws IllegalArgumentException, SecurityException;
+    //SPD: add cgourp control for ADJHBSY-7559 by sifeng.tian 20231127 end
+
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+    /**
+     * Sets the scheduling group for processes in the same cgroup.procs of uid and pid
+     * @hide
+     * @param uid The user identifier of the process to change.
+     * @param pid The identifier of the process to change.
+     * @param group The target group for this process from THREAD_GROUP_*.
+     * @param dex2oat_only is the cgroup apply for all or for dex2oat only.
+     *
+     * @throws IllegalArgumentException Throws IllegalArgumentException if
+     * <var>tid</var> does not exist.
+     * @throws SecurityException Throws SecurityException if your process does
+     * not have permission to modify the given thread, or to use the given
+     * priority.
+     *
+     * group == THREAD_GROUP_DEFAULT means to move all non-background priority
+     * threads to the foreground scheduling group, but to leave background
+     * priority threads alone.  group == THREAD_GROUP_BG_NONINTERACTIVE moves all
+     * threads, regardless of priority, to the background scheduling group.
+     * group == THREAD_GROUP_FOREGROUND is not allowed.
+     *
+     * Always sets cpusets.
+     */
+    public static final native void setCgroupProcsProcessGroup(int uid, int pid, int group, boolean dex2oat_only)
+            throws IllegalArgumentException, SecurityException;
+
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
     /**
      * Freeze or unfreeze the specified process.
      *
@@ -1220,6 +1293,17 @@ public class Process {
      * in time.
      */
     public static final native int[] getExclusiveCores();
+
+
+    /**
+     * Get the CPU affinity masks from sched_getaffinity.
+     *
+     * @param tid The identifier of the thread/process to get the sched affinity.
+     * @return an array of CPU affinity masks, of which the size will be dynamic and just enough to
+     *         include all bit masks for all currently online and possible CPUs of the device.
+     * @hide
+     */
+    public static final native long[] getSchedAffinity(int tid);
 
     /**
      * Set the priority of the calling thread, based on Linux priorities.  See
@@ -1336,12 +1420,19 @@ public class Process {
      * Return the name of this process. By default, the process name is the same as the app's
      * package name, but this can be changed using {@code android:process}.
      */
+    @RavenwoodReplace
     @NonNull
     public static String myProcessName() {
         // Note this could be different from the actual process name if someone changes the
         // process name using native code (using pthread_setname_np()). But sArgV0
         // is the name that the system thinks this process has.
         return sArgV0;
+    }
+
+    /** @hide */
+    @NonNull
+    public static String myProcessName$ravenwood() {
+        return "ravenwood";
     }
 
     /**

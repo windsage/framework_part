@@ -351,4 +351,27 @@ public abstract class PowerManagerInternal {
      * return false if ambient display is not available.
      */
     public abstract boolean isAmbientDisplaySuppressed();
+
+    /**
+     * Notifies PowerManager that the device has entered a postured state (stationary + upright).
+     * This may affect dream eligibility.
+     */
+    public abstract void setDevicePostured(boolean isPostured);
+
+    /**
+     * Notifies PowerManager that settings have changed and that it should refresh its state.
+     */
+    public abstract void updateSettings();
+
+    /**
+     * Forces the device to go to sleep, even if there are currently wakelocks being held.
+     * Note: only used for wearables
+     */
+    public abstract void forceDisplaySleep();
+
+    /**
+     * Wakeup the device from a previous force sleep.
+     * Note: only used for wearables
+     */
+    public abstract void wakeupFromForceDisplaySleep();
 }

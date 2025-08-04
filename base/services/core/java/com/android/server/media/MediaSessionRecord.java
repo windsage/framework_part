@@ -91,7 +91,9 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
-
+//T-HUB core[SDD]: add by cheng.liu5 20220526 start
+import com.transsion.hubcore.server.utils.ITranMediaUtils;
+//T-HUB core[SDD]: add by cheng.liu5 20220526 start
 /**
  * This is the system implementation of a Session. Apps will interact with the
  * MediaSession wrapper class instead.
@@ -234,11 +236,23 @@ public class MediaSessionRecord extends MediaSessionRecordImpl implements IBinde
             };
 
     @GuardedBy("mLock")
-    private @UserEngagementState int mUserEngagementState = USER_DISENGAGED;
+    private @UserEngagementState int mUserEngagementState = USER_ENGAGEMENT_UNSET;
 
-    @IntDef({USER_PERMANENTLY_ENGAGED, USER_TEMPORARILY_ENGAGED, USER_DISENGAGED})
+    @IntDef({
+        USER_ENGAGEMENT_UNSET,
+        USER_PERMANENTLY_ENGAGED,
+        USER_TEMPORARILY_ENGAGED,
+        USER_DISENGAGED
+    })
     @Retention(RetentionPolicy.SOURCE)
     private @interface UserEngagementState {}
+
+    /**
+     * Indicates that the {@link UserEngagementState} is not yet set.
+     *
+     * @see #updateUserEngagedStateIfNeededLocked(boolean)
+     */
+    private static final int USER_ENGAGEMENT_UNSET = -1;
 
     /**
      * Indicates that the session is {@linkplain MediaSession#isActive() active} and in one of the
@@ -263,15 +277,6 @@ public class MediaSessionRecord extends MediaSessionRecordImpl implements IBinde
      * @see #updateUserEngagedStateIfNeededLocked(boolean)
      */
     private static final int USER_DISENGAGED = 2;
-
-    /**
-     * Indicates the duration of the temporary engaged state, in milliseconds.
-     *
-     * <p>When switching to an {@linkplain PlaybackState#isActive() inactive state}, the user is
-     * treated as temporarily engaged, meaning the corresponding session is only considered in an
-     * engaged state for the duration of this timeout, and only if coming from an engaged state.
-     */
-    private static final int TEMP_USER_ENGAGED_TIMEOUT_MS = 600000;
 
     public MediaSessionRecord(
             int ownerPid,
@@ -605,7 +610,8 @@ public class MediaSessionRecord extends MediaSessionRecordImpl implements IBinde
                             if (mUserEngagementState == USER_TEMPORARILY_ENGAGED) {
                                 mHandler.postDelayed(
                                         mUserEngagementTimeoutExpirationRunnable,
-                                        TEMP_USER_ENGAGED_TIMEOUT_MS);
+                                        MediaSessionDeviceConfig
+                                                .getMediaSessionTempUserEngagedDurationMs());
                             }
                         }
                     }
@@ -1062,11 +1068,10 @@ public class MediaSessionRecord extends MediaSessionRecordImpl implements IBinde
         }
         int oldUserEngagedState = mUserEngagementState;
         int newUserEngagedState;
-        if (!isActive() || mPlaybackState == null) {
-            newUserEngagedState = USER_DISENGAGED;
-        } else if (mPlaybackState.isActive()) {
+        if (isActive() && mPlaybackState != null && mPlaybackState.isActive()) {
             newUserEngagedState = USER_PERMANENTLY_ENGAGED;
         } else if (oldUserEngagedState == USER_PERMANENTLY_ENGAGED
+                || oldUserEngagedState == USER_ENGAGEMENT_UNSET
                 || (oldUserEngagedState == USER_TEMPORARILY_ENGAGED && !isTimeoutExpired)) {
             newUserEngagedState = USER_TEMPORARILY_ENGAGED;
         } else {
@@ -1079,14 +1084,15 @@ public class MediaSessionRecord extends MediaSessionRecordImpl implements IBinde
         mUserEngagementState = newUserEngagedState;
         if (newUserEngagedState == USER_TEMPORARILY_ENGAGED && !isGlobalPrioritySessionActive) {
             mHandler.postDelayed(
-                    mUserEngagementTimeoutExpirationRunnable, TEMP_USER_ENGAGED_TIMEOUT_MS);
+                    mUserEngagementTimeoutExpirationRunnable,
+                    MediaSessionDeviceConfig.getMediaSessionTempUserEngagedDurationMs());
         } else {
             mHandler.removeCallbacks(mUserEngagementTimeoutExpirationRunnable);
         }
 
         boolean wasUserEngaged = oldUserEngagedState != USER_DISENGAGED;
         boolean isNowUserEngaged = newUserEngagedState != USER_DISENGAGED;
-        if (wasUserEngaged != isNowUserEngaged) {
+        if (oldUserEngagedState == USER_ENGAGEMENT_UNSET || wasUserEngaged != isNowUserEngaged) {
             mHandler.post(
                     () ->
                             mService.onSessionUserEngagementStateChange(
@@ -1299,6 +1305,9 @@ public class MediaSessionRecord extends MediaSessionRecordImpl implements IBinde
                 updateUserEngagedStateIfNeededLocked(
                         /* isTimeoutExpired= */ false, isGlobalPrioritySessionActive);
             }
+            //T-HUB core[SDD]: add by cheng.liu5 20220526 start
+            ITranMediaUtils.Instance().hookAudioPlayerChanged(mOwnerUid, mOwnerPid, 0, oldState, newState);
+            //T-HUB core[SDD]: add by cheng.liu5 20220526 end
             final long token = Binder.clearCallingIdentity();
             try {
                 mService.onSessionPlaybackStateChanged(

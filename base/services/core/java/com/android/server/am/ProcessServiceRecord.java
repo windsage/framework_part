@@ -39,7 +39,7 @@ import java.util.ArrayList;
 /**
  * The state info of all services in the process.
  */
-final class ProcessServiceRecord {
+public final class ProcessServiceRecord {
     /**
      * Are there any client services with activities?
      */

@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Center
+ */
+
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #ifndef ANDROID_GUI_BUFFERQUEUEPRODUCER_H
 #define ANDROID_GUI_BUFFERQUEUEPRODUCER_H
 
@@ -24,6 +32,14 @@
 
 namespace android {
 
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+#ifdef QTI_DISPLAY_EXTENSION
+namespace libguiextension {
+class QtiBufferQueueProducerExtension;
+};
+#endif
+
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 class IBinder;
 struct BufferSlot;
 
@@ -36,8 +52,13 @@ class BufferQueueProducer : public BnGraphicBufferProducer {
 public:
     friend class BufferQueue; // Needed to access binderDied
 
-    explicit BufferQueueProducer(const sp<BufferQueueCore>& core,
-                                 bool consumerIsSurfaceFlinger = false);
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+#ifdef QTI_DISPLAY_EXTENSION
+    friend class libguiextension::QtiBufferQueueProducerExtension;
+    sp<libguiextension::QtiBufferQueueProducerExtension> mQtiBQPExtn;
+#endif
+
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
     ~BufferQueueProducer() override;
 
     // requestBuffer returns the GraphicBuffer for slot N.
@@ -46,6 +67,11 @@ public:
     // by dequeueBuffer.  It must be called again if dequeueBuffer returns
     // flags indicating that previously-returned buffers are no longer valid.
     virtual status_t requestBuffer(int slot, sp<GraphicBuffer>* buf);
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    // see IGraphicsBufferProducer::extendSlotCount
+    virtual status_t extendSlotCount(int size) override;
+#endif
 
     // see IGraphicsBufferProducer::setMaxDequeuedBufferCount
     virtual status_t setMaxDequeuedBufferCount(int maxDequeuedBuffers);
@@ -214,6 +240,9 @@ public:
 #endif
 
 protected:
+    explicit BufferQueueProducer(const sp<BufferQueueCore>& core,
+                                 bool consumerIsSurfaceFlinger = false);
+    friend class sp<BufferQueueProducer>;
     // see IGraphicsBufferProducer::setMaxDequeuedBufferCount, but with the ability to retrieve the
     // total maximum buffer count for the buffer queue (dequeued AND acquired)
     status_t setMaxDequeuedBufferCount(int maxDequeuedBuffers, int* maxBufferCount);

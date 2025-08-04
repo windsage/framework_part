@@ -2809,6 +2809,9 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
             }
             handleRemoveListLocked();
         }
+// QTI_BEGIN: 2021-02-23: Telephony: Broadcast radio power state changes
+        broadcastRadioPowerStateChanged(state, phoneId, subId);
+// QTI_END: 2021-02-23: Telephony: Broadcast radio power state changes
     }
 
     @Override
@@ -2816,13 +2819,12 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
         if (!checkNotifyPermission("notifyEmergencyNumberList()")) {
             return;
         }
-        if (Flags.enforceTelephonyFeatureMappingForPublicApis()) {
-            if (!mContext.getPackageManager().hasSystemFeature(
-                    PackageManager.FEATURE_TELEPHONY_CALLING)) {
-                // TelephonyManager.getEmergencyNumberList() throws an exception if
-                // FEATURE_TELEPHONY_CALLING is not defined.
-                return;
-            }
+        if (!mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEPHONY_CALLING)
+                && !mContext.getPackageManager()
+                        .hasSystemFeature(PackageManager.FEATURE_TELEPHONY_MESSAGING)) {
+            // TelephonyManager.getEmergencyNumberList() throws an exception if
+            // FEATURE_TELEPHONY_CALLING or FEATURE_TELEPHONY_MESSAGING is not defined.
+            return;
         }
 
         synchronized (mRecords) {
@@ -4125,6 +4127,14 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
      */
     public static final String ACTION_SIGNAL_STRENGTH_CHANGED = "android.intent.action.SIG_STR";
 
+// QTI_BEGIN: 2021-02-23: Telephony: Broadcast radio power state changes
+    /**
+     * Broadcast Action: The radio power state has changed.
+     */
+    private static final String ACTION_RADIO_POWER_STATE_CHANGED =
+            "org.codeaurora.intent.action.RADIO_POWER_STATE";
+
+// QTI_END: 2021-02-23: Telephony: Broadcast radio power state changes
     private void broadcastServiceStateChanged(ServiceState state, int phoneId, int subId) {
         try {
             mBatteryStats.notePhoneState(state.getState());
@@ -4247,6 +4257,21 @@ public class TelephonyRegistry extends ITelephonyRegistry.Stub {
                 .setDeferralPolicy(BroadcastOptions.DEFERRAL_POLICY_UNTIL_ACTIVE);
     }
 
+// QTI_BEGIN: 2021-02-23: Telephony: Broadcast radio power state changes
+    private void broadcastRadioPowerStateChanged(int state, int phoneId, int subId) {
+        Intent intent = new Intent(ACTION_RADIO_POWER_STATE_CHANGED);
+        intent.addFlags(Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
+        // Pass the subscription along with the intent.
+        intent.putExtra(PHONE_CONSTANTS_SUBSCRIPTION_KEY, subId);
+        intent.putExtra(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, subId);
+        intent.putExtra(PHONE_CONSTANTS_SLOT_KEY, phoneId);
+        intent.putExtra(SubscriptionManager.EXTRA_SLOT_INDEX, phoneId);
+        intent.putExtra(PHONE_CONSTANTS_STATE_KEY, state);
+        mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
+                Manifest.permission.READ_PRIVILEGED_PHONE_STATE);
+    }
+
+// QTI_END: 2021-02-23: Telephony: Broadcast radio power state changes
     private void broadcastSignalStrengthChanged(SignalStrength signalStrength, int phoneId,
             int subId) {
         final long ident = Binder.clearCallingIdentity();

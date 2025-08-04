@@ -249,6 +249,20 @@ public class AudioSystem
     /** @hide */
     public static final int AUDIO_FORMAT_OPUS           = 0x08000000;
 
+    /** @hide */
+// QTI_BEGIN: 2019-04-10: Audio: Add support for audio extended codecs
+    public static final int AUDIO_FORMAT_CELT           = 0x26000000;
+// QTI_END: 2019-04-10: Audio: Add support for audio extended codecs
+    /** @hide */
+// QTI_BEGIN: 2019-04-10: Audio: Add support for audio extended codecs
+    public static final int AUDIO_FORMAT_APTX_ADAPTIVE  = 0x27000000;
+// QTI_END: 2019-04-10: Audio: Add support for audio extended codecs
+    /** @hide */
+// QTI_BEGIN: 2019-04-30: Audio: Add support for APTX TWSP audio codec
+    public static final int AUDIO_FORMAT_APTX_TWSP      = 0x2A000000;
+// QTI_END: 2019-04-30: Audio: Add support for APTX TWSP audio codec
+    /** @hide */
+    public static final int VX_AUDIO_FORMAT_APTX_ADAPTIVE_QLEA       = 0x30000000;
 
     /** @hide */
     @IntDef(flag = false, prefix = "AUDIO_FORMAT_", value = {
@@ -294,8 +308,19 @@ public class AudioSystem
             case AUDIO_FORMAT_APTX: return BluetoothCodecConfig.SOURCE_CODEC_TYPE_APTX;
             case AUDIO_FORMAT_APTX_HD: return BluetoothCodecConfig.SOURCE_CODEC_TYPE_APTX_HD;
             case AUDIO_FORMAT_LDAC: return BluetoothCodecConfig.SOURCE_CODEC_TYPE_LDAC;
+// QTI_BEGIN: 2019-04-10: Audio: Add support for audio extended codecs
+            case AUDIO_FORMAT_CELT: return BluetoothCodecConfig.SOURCE_CODEC_TYPE_CELT;
+            case AUDIO_FORMAT_APTX_ADAPTIVE:
+                     return BluetoothCodecConfig.SOURCE_CODEC_TYPE_APTX_ADAPTIVE;
+// QTI_END: 2019-04-10: Audio: Add support for audio extended codecs
+// QTI_BEGIN: 2019-04-30: Audio: Add support for APTX TWSP audio codec
+            case AUDIO_FORMAT_APTX_TWSP:
+                     return BluetoothCodecConfig.SOURCE_CODEC_TYPE_APTX_TWSP;
+// QTI_END: 2019-04-30: Audio: Add support for APTX TWSP audio codec
             case AUDIO_FORMAT_LC3: return BluetoothCodecConfig.SOURCE_CODEC_TYPE_LC3;
             case AUDIO_FORMAT_OPUS: return BluetoothCodecConfig.SOURCE_CODEC_TYPE_OPUS;
+            case VX_AUDIO_FORMAT_APTX_ADAPTIVE_QLEA:
+                 return BluetoothLeAudioCodecConfig.SOURCE_CODEC_TYPE_APTX_ADAPTIVE_LE;
             default:
                 Log.e(TAG, "Unknown audio format 0x" + Integer.toHexString(audioFormat)
                         + " for conversion to BT codec");
@@ -311,6 +336,8 @@ public class AudioSystem
             @AudioFormatNativeEnumForBtLeAudioCodec int audioFormat) {
         switch (audioFormat) {
             case AUDIO_FORMAT_LC3: return BluetoothLeAudioCodecConfig.SOURCE_CODEC_TYPE_LC3;
+            case VX_AUDIO_FORMAT_APTX_ADAPTIVE_QLEA:
+                   return BluetoothLeAudioCodecConfig.SOURCE_CODEC_TYPE_APTX_ADAPTIVE_LE;
             default:
                 Log.e(TAG, "Unknown audio format 0x" + Integer.toHexString(audioFormat)
                         + " for conversion to BT LE audio codec");
@@ -337,7 +364,15 @@ public class AudioSystem
                 return AudioSystem.AUDIO_FORMAT_APTX_HD;
             case BluetoothCodecConfig.SOURCE_CODEC_TYPE_LDAC:
                 return AudioSystem.AUDIO_FORMAT_LDAC;
+            case BluetoothCodecConfig.SOURCE_CODEC_TYPE_CELT:
+                return AudioSystem.AUDIO_FORMAT_CELT;
+            case BluetoothCodecConfig.SOURCE_CODEC_TYPE_APTX_ADAPTIVE:
+                return AudioSystem.AUDIO_FORMAT_APTX_ADAPTIVE;
+            case BluetoothCodecConfig.SOURCE_CODEC_TYPE_APTX_TWSP:
+                return AudioSystem.AUDIO_FORMAT_APTX_TWSP;
+// QTI_BEGIN: 2020-10-01: Audio: Add support for lc3 codec.
             case BluetoothCodecConfig.SOURCE_CODEC_TYPE_LC3:
+// QTI_END: 2020-10-01: Audio: Add support for lc3 codec.
                 return AudioSystem.AUDIO_FORMAT_LC3;
             case BluetoothCodecConfig.SOURCE_CODEC_TYPE_OPUS:
                 return AudioSystem.AUDIO_FORMAT_OPUS;
@@ -469,8 +504,8 @@ public class AudioSystem
                 return "AUDIO_FORMAT_DTS_UHD";
             case /* AUDIO_FORMAT_DRA             */ 0x2F000000:
                 return "AUDIO_FORMAT_DRA";
-            case /* AUDIO_FORMAT_APTX_ADAPTIVE_QLEA */ 0x30000000:
-                return "AUDIO_FORMAT_APTX_ADAPTIVE_QLEA";
+            case /* VX_AUDIO_FORMAT_APTX_ADAPTIVE_QLEA */ 0x30000000:
+                return "VX_AUDIO_FORMAT_APTX_ADAPTIVE_QLEA";
             case /* AUDIO_FORMAT_APTX_ADAPTIVE_R4   */ 0x31000000:
                 return "AUDIO_FORMAT_APTX_ADAPTIVE_R4";
             case /* AUDIO_FORMAT_DTS_HD_MA       */ 0x32000000:
@@ -1134,6 +1169,9 @@ public class AudioSystem
     public static final Set<Integer> DEVICE_ALL_HDMI_SYSTEM_AUDIO_AND_SPEAKER_SET;
     /** @hide */
     public static final Set<Integer> DEVICE_OUT_ALL_BLE_SET;
+    /** @hide */
+    public static final Set<Integer> DEVICE_OUT_PICK_FOR_VOLUME_SET;
+
     static {
         DEVICE_OUT_ALL_SET = new HashSet<>();
         DEVICE_OUT_ALL_SET.add(DEVICE_OUT_EARPIECE);
@@ -1201,6 +1239,22 @@ public class AudioSystem
         DEVICE_OUT_ALL_BLE_SET.add(DEVICE_OUT_BLE_HEADSET);
         DEVICE_OUT_ALL_BLE_SET.add(DEVICE_OUT_BLE_SPEAKER);
         DEVICE_OUT_ALL_BLE_SET.add(DEVICE_OUT_BLE_BROADCAST);
+
+        DEVICE_OUT_PICK_FOR_VOLUME_SET = new HashSet<>();
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_WIRED_HEADSET);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_WIRED_HEADPHONE);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_USB_DEVICE);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_USB_HEADSET);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLUETOOTH_A2DP);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLUETOOTH_SCO);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLUETOOTH_SCO_HEADSET);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLUETOOTH_SCO_CARKIT);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_HEARING_AID);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLE_HEADSET);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLE_SPEAKER);
+        DEVICE_OUT_PICK_FOR_VOLUME_SET.add(DEVICE_OUT_BLE_BROADCAST);
     }
 
     // input devices
@@ -1754,13 +1808,21 @@ public class AudioSystem
     @UnsupportedAppUsage
     public static int setDeviceConnectionState(AudioDeviceAttributes attributes, int state,
             int codecFormat) {
+        return setDeviceConnectionState(attributes, state, codecFormat, false /*deviceSwitch*/);
+    }
+
+    /**
+     * @hide
+     */
+    public static int setDeviceConnectionState(AudioDeviceAttributes attributes, int state,
+            int codecFormat, boolean deviceSwitch) {
         android.media.audio.common.AudioPort port =
                 AidlConversion.api2aidl_AudioDeviceAttributes_AudioPort(attributes);
         Parcel parcel = Parcel.obtain();
         port.writeToParcel(parcel, 0);
         parcel.setDataPosition(0);
         try {
-            return setDeviceConnectionState(state, parcel, codecFormat);
+            return setDeviceConnectionState(state, parcel, codecFormat, deviceSwitch);
         } finally {
             parcel.recycle();
         }
@@ -1769,7 +1831,10 @@ public class AudioSystem
      * @hide
      */
     @UnsupportedAppUsage
-    public static native int setDeviceConnectionState(int state, Parcel parcel, int codecFormat);
+    public static native int setDeviceConnectionState(int state, Parcel parcel, int codecFormat,
+                                                      boolean deviceSwitch);
+
+
     /** @hide */
     @UnsupportedAppUsage
     public static native int getDeviceConnectionState(int device, String device_address);
@@ -2702,4 +2767,25 @@ public class AudioSystem
      * @hide
      */
     public static native void triggerSystemPropertyUpdate(long handle);
+
+    /**
+     * Registers the given {@link INativeAudioVolumeGroupCallback} to native audioserver.
+     * @param callback to register
+     * @return {@link #SUCCESS} if successfully registered.
+     *
+     * @hide
+     */
+    public static native int registerAudioVolumeGroupCallback(
+            INativeAudioVolumeGroupCallback callback);
+
+    /**
+     * Unegisters the given {@link INativeAudioVolumeGroupCallback} from native audioserver
+     * previously registered via {@link #registerAudioVolumeGroupCallback}.
+     * @param callback to register
+     * @return {@link #SUCCESS} if successfully registered.
+     *
+     * @hide
+     */
+    public static native int unregisterAudioVolumeGroupCallback(
+            INativeAudioVolumeGroupCallback callback);
 }

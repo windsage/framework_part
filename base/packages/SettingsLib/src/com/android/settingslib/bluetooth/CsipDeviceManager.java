@@ -78,9 +78,14 @@ public class CsipDeviceManager {
             }
 
             for (Map.Entry<Integer, ParcelUuid> entry : groupIdMap.entrySet()) {
-                if (entry.getValue().equals(BluetoothUuid.CAP)) {
+// QTI_BEGIN: 2022-04-23: Bluetooth: Csip: Add below enhancements
+                // Based on Spec CAP UUID is not mandatory, also we see failures with PTS
+                //if (entry.getValue().equals(BluetoothUuid.CAP)) {
+// QTI_END: 2022-04-23: Bluetooth: Csip: Add below enhancements
                     return entry.getKey();
-                }
+// QTI_BEGIN: 2022-04-23: Bluetooth: Csip: Add below enhancements
+                //}
+// QTI_END: 2022-04-23: Bluetooth: Csip: Add below enhancements
             }
         }
         return BluetoothCsipSetCoordinator.GROUP_ID_INVALID;
@@ -134,6 +139,8 @@ public class CsipDeviceManager {
             // Do nothing if GroupId has been assigned
             if (!isValidGroupId(cachedDevice.getGroupId())) {
                 final int newGroupId = getBaseGroupId(cachedDevice.getDevice());
+                log("updateCsipDevices: propose new group id " + newGroupId + " for device "
+                        + cachedDevice.getDevice());
                 // Do nothing if there is no GroupId on Bluetooth device
                 if (isValidGroupId(newGroupId)) {
                     cachedDevice.setGroupId(newGroupId);
@@ -429,7 +436,10 @@ public class CsipDeviceManager {
                     for (BluetoothDevice device : sinksToSync) {
                         log("addMemberDevicesIntoMainDevice: sync audio sharing source to "
                                 + device.getAnonymizedAddress());
-                        assistant.addSource(device, metadata, /* isGroupOp= */ false);
+                        if (assistant.getConnectionStatus(device)
+                                == BluetoothProfile.STATE_CONNECTED) {
+                            assistant.addSource(device, metadata, /* isGroupOp= */ false);
+                        }
                     }
                 }
             }

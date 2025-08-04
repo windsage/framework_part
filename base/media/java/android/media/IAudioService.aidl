@@ -32,6 +32,7 @@ import android.media.BluetoothProfileConnectionInfo;
 import android.media.FadeManagerConfiguration;
 import android.media.IAudioDeviceVolumeDispatcher;
 import android.media.IAudioFocusDispatcher;
+import android.media.IAudioManagerNative;
 import android.media.IAudioModeDispatcher;
 import android.media.IAudioRoutesObserver;
 import android.media.IAudioServerStateDispatcher;
@@ -64,6 +65,7 @@ import android.media.audiopolicy.AudioPolicyConfig;
 import android.media.audiopolicy.AudioProductStrategy;
 import android.media.audiopolicy.AudioVolumeGroup;
 import android.media.audiopolicy.IAudioPolicyCallback;
+import android.media.audiopolicy.IAudioVolumeChangeDispatcher;
 import android.media.projection.IMediaProjection;
 import android.net.Uri;
 import android.os.PersistableBundle;
@@ -83,6 +85,7 @@ interface IAudioService {
     // When a method's argument list is changed, BpAudioManager's corresponding serialization code
     // (if any) in frameworks/native/services/audiomanager/IAudioManager.cpp must be updated.
 
+    IAudioManagerNative getNativeInterface();
     int trackPlayer(in PlayerBase.PlayerIdCard pic);
 
     oneway void playerAttributes(in int piid, in AudioAttributes attr);
@@ -278,6 +281,11 @@ interface IAudioService {
 
     int getCurrentAudioFocus();
 
+// QTI_BEGIN: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
+    void setSwbParameters(in String keyValuePairs);
+    void setScoParameters(in String name, boolean hasNrecEnabled, boolean hasWbsEnabled);
+
+// QTI_END: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
     void startBluetoothSco(IBinder cb, int targetSdkVersion,
             in AttributionSource attributionSource);
     void startBluetoothScoVirtualCall(IBinder cb, in AttributionSource attributionSource);
@@ -308,6 +316,11 @@ interface IAudioService {
     @EnforcePermission("MODIFY_AUDIO_ROUTING")
     void setWiredDeviceConnectionState(in AudioDeviceAttributes aa, int state, String caller);
 
+// QTI_BEGIN: 2019-06-20: Audio: Revert the change: AudioService: remove dead BT code.
+    void handleBluetoothA2dpActiveDeviceChange(in BluetoothDevice device,
+            int state, int profile, boolean suppressNoisyIntent, int a2dpVolume);
+
+// QTI_END: 2019-06-20: Audio: Revert the change: AudioService: remove dead BT code.
     @UnsupportedAppUsage
     AudioRoutesInfo startWatchingRoutes(in IAudioRoutesObserver observer);
 
@@ -361,13 +374,6 @@ interface IAudioService {
 
     @EnforcePermission("MODIFY_AUDIO_SETTINGS_PRIVILEGED")
     oneway void setCsdAsAFeatureEnabled(boolean csdToggleValue);
-
-    @EnforcePermission("MODIFY_AUDIO_SETTINGS_PRIVILEGED")
-    oneway void setBluetoothAudioDeviceCategory_legacy(in String address, boolean isBle,
-            int deviceCategory);
-
-    @EnforcePermission("MODIFY_AUDIO_SETTINGS_PRIVILEGED")
-    int getBluetoothAudioDeviceCategory_legacy(in String address, boolean isBle);
 
     @EnforcePermission("MODIFY_AUDIO_SETTINGS_PRIVILEGED")
     boolean setBluetoothAudioDeviceCategory(in String address, int deviceCategory);
@@ -451,6 +457,10 @@ interface IAudioService {
 
     boolean isAudioServerRunning();
 
+    void registerAudioVolumeCallback(IAudioVolumeChangeDispatcher avc);
+
+    oneway void unregisterAudioVolumeCallback(IAudioVolumeChangeDispatcher avc);
+
     int setUidDeviceAffinity(in IAudioPolicyCallback pcb, in int uid, in int[] deviceTypes,
              in String[] deviceAddresses);
 
@@ -523,6 +533,10 @@ interface IAudioService {
     @EnforcePermission("MODIFY_AUDIO_ROUTING")
     oneway void setMultiAudioFocusEnabled(in boolean enabled);
 
+// QTI_BEGIN: 2021-05-17: Audio: Add HDR restore param functionality in AudioService
+    void cacheParameters(in String keyValuePairs);
+
+// QTI_END: 2021-05-17: Audio: Add HDR restore param functionality in AudioService
     int setPreferredDevicesForCapturePreset(
             in int capturePreset, in List<AudioDeviceAttributes> devices);
 
@@ -817,4 +831,8 @@ interface IAudioService {
     @EnforcePermission("QUERY_AUDIO_STATE")
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.QUERY_AUDIO_STATE)")
     boolean shouldNotificationSoundPlay(in AudioAttributes aa);
+
+    @EnforcePermission("MODIFY_AUDIO_SETTINGS_PRIVILEGED")
+    @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.MODIFY_AUDIO_SETTINGS_PRIVILEGED)")
+    void setEnableHardening(in boolean shouldEnable);
 }

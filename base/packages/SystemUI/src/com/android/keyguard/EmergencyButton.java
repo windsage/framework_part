@@ -16,10 +16,10 @@
 
 package com.android.keyguard;
 
-import static com.android.systemui.Flags.gsfBouncer;
-
 import android.content.Context;
+import com.android.systemui.Dependency;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
@@ -28,7 +28,15 @@ import android.view.ViewConfiguration;
 import android.widget.Button;
 
 import com.android.internal.util.EmergencyAffordanceManager;
+import com.android.systemui.Flags;
+import com.android.systemui.FontStyles;
+import com.android.systemui.bouncer.shared.constants.KeyguardBouncerConstants;
+import com.android.systemui.res.R;
 
+// QTI_BEGIN: 2020-09-10: Android_UI: SystemUI: show emergency button on lock screen
+import java.util.List;
+
+// QTI_END: 2020-09-10: Android_UI: SystemUI: show emergency button on lock screen
 /**
  * This class implements a smart emergency button that updates itself based
  * on telephony state.  When the phone is idle, it is an emergency call button.
@@ -72,6 +80,17 @@ public class EmergencyButton extends Button {
                 return false;
             });
         }
+        if (Flags.bouncerUiRevamp2()) {
+            setTypeface(Typeface.create(FontStyles.GSF_TITLE_MEDIUM, Typeface.NORMAL));
+            Drawable background = getBackground();
+            int bgColor = mContext.getColor(KeyguardBouncerConstants.Color.actionButtonBg);
+            if (background != null) {
+                background.setTint(bgColor);
+            } else {
+                setBackgroundColor(bgColor);
+            }
+            setTextColor(mContext.getColor(KeyguardBouncerConstants.Color.actionButtonText));
+        }
     }
 
     @Override
@@ -98,8 +117,8 @@ public class EmergencyButton extends Button {
         return super.performLongClick();
     }
 
-    void updateEmergencyCallButton(boolean isInCall, boolean hasTelephonyRadio, boolean simLocked,
-            boolean isSecure) {
+    public void updateEmergencyCallButton(boolean isInCall, boolean hasTelephonyRadio, boolean simLocked,
+            boolean isSecure, boolean isEmergencyCapable) {
         boolean visible = false;
         if (hasTelephonyRadio) {
             // Emergency calling requires a telephony radio.
@@ -111,7 +130,18 @@ public class EmergencyButton extends Button {
                     visible = mEnableEmergencyCallWhileSimLocked;
                 } else {
                     // Only show if there is a secure screen (pin/pattern/SIM pin/SIM puk);
-                    visible = isSecure;
+// QTI_BEGIN: 2023-04-23: Android_UI: SystemUI: Fix emergency call button does not shows on lock screen
+                    visible = isSecure
+// QTI_END: 2023-04-23: Android_UI: SystemUI: Fix emergency call button does not shows on lock screen
+                        || mContext.getResources().getBoolean(com.android.settingslib.R.bool.config_showEmergencyButton);
+// QTI_BEGIN: 2018-01-31: SystemUI: Change for Emergency Button
+                }
+
+// QTI_END: 2018-01-31: SystemUI: Change for Emergency Button
+                if (mContext.getResources().getBoolean(com.android.settingslib.R.bool.kg_hide_emgcy_btn_when_oos)) {
+// QTI_BEGIN: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
+                    visible = visible && isEmergencyCapable;
+// QTI_END: 2021-05-10: Android_UI: SystemUI: Fix emergency call button no response issue
                 }
             }
         }
@@ -125,9 +155,6 @@ public class EmergencyButton extends Button {
                 textId = com.android.internal.R.string.lockscreen_emergency_call;
             }
             setText(textId);
-            if (gsfBouncer()) {
-                setTypeface(Typeface.create("gsf-title-medium", Typeface.NORMAL));
-            }
         } else {
             setVisibility(View.GONE);
         }

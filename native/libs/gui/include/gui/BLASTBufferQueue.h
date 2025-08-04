@@ -14,12 +14,21 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #ifndef ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 #define ANDROID_GUI_BLAST_BUFFER_QUEUE_H
 
 #include <optional>
 #include <queue>
 
+#include <ftl/small_map.h>
 #include <gui/BufferItem.h>
 #include <gui/BufferItemConsumer.h>
 #include <gui/IGraphicBufferConsumer.h>
@@ -34,28 +43,25 @@
 
 #include <com_android_graphics_libgui_flags.h>
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+#include "../../QtiExtension/QtiBLASTBufferQueueExtension.h"
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 namespace android {
 
+// Sizes determined empirically to avoid allocations during common activity.
+constexpr size_t kSubmittedBuffersMapSizeHint = 8;
+constexpr size_t kDequeueTimestampsMapSizeHint = 32;
+
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+namespace libguiextension {
+class QtiBLASTBufferQueueExtension;
+};
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 class BLASTBufferQueue;
 class BufferItemConsumer;
 
 class BLASTBufferItemConsumer : public BufferItemConsumer {
 public:
-#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
-    BLASTBufferItemConsumer(const sp<IGraphicBufferProducer>& producer,
-                            const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
-                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
-          : BufferItemConsumer(producer, consumer, consumerUsage, bufferCount, controlledByApp),
-#else
-    BLASTBufferItemConsumer(const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
-                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
-          : BufferItemConsumer(consumer, consumerUsage, bufferCount, controlledByApp),
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
-            mBLASTBufferQueue(std::move(bbq)),
-            mCurrentlyConnected(false),
-            mPreviouslyConnected(false) {
-    }
-
     void onDisconnect() override EXCLUDES(mMutex);
     void addAndGetFrameTimestamps(const NewFrameEventsEntry* newTimestamps,
                                   FrameEventHistoryDelta* outDelta) override EXCLUDES(mMutex);
@@ -76,6 +82,23 @@ protected:
 #endif
 
 private:
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+    BLASTBufferItemConsumer(const sp<IGraphicBufferProducer>& producer,
+                            const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
+                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
+          : BufferItemConsumer(producer, consumer, consumerUsage, bufferCount, controlledByApp),
+#else
+    BLASTBufferItemConsumer(const sp<IGraphicBufferConsumer>& consumer, uint64_t consumerUsage,
+                            int bufferCount, bool controlledByApp, wp<BLASTBufferQueue> bbq)
+          : BufferItemConsumer(consumer, consumerUsage, bufferCount, controlledByApp),
+#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_CONSUMER_BASE_OWNS_BQ)
+            mBLASTBufferQueue(std::move(bbq)),
+            mCurrentlyConnected(false),
+            mPreviouslyConnected(false) {
+    }
+
+    friend class sp<BLASTBufferItemConsumer>;
+
     const wp<BLASTBufferQueue> mBLASTBufferQueue;
 
     uint64_t mCurrentFrameNumber GUARDED_BY(mMutex) = 0;
@@ -89,16 +112,29 @@ private:
 
 class BLASTBufferQueue : public ConsumerBase::FrameAvailableListener {
 public:
-    BLASTBufferQueue(const std::string& name, bool updateDestinationFrame = true);
-    BLASTBufferQueue(const std::string& name, const sp<SurfaceControl>& surface, int width,
-                     int height, int32_t format);
-
     sp<IGraphicBufferProducer> getIGraphicBufferProducer() const {
         return mProducer;
     }
     sp<Surface> getSurface(bool includeSurfaceControlHandle);
     bool isSameSurfaceControl(const sp<SurfaceControl>& surfaceControl) const;
 
+// QTI_BEGIN: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+    void qtiSetUndequeuedBufferCount(int count) {
+// QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+// QTI_BEGIN: 2023-04-24: Performance: gui: Fix for thread safety
+        mQtiNumUndequeued = count;
+// QTI_END: 2023-04-24: Performance: gui: Fix for thread safety
+// QTI_BEGIN: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+    }
+
+    int qtiGetUndequeuedBufferCount() const {
+// QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+// QTI_BEGIN: 2023-04-24: Performance: gui: Fix for thread safety
+        return mQtiNumUndequeued;
+// QTI_END: 2023-04-24: Performance: gui: Fix for thread safety
+// QTI_BEGIN: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+    }
+// QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
     void onFrameReplaced(const BufferItem& item) override;
     void onFrameAvailable(const BufferItem& item) override;
     void onFrameDequeued(const uint64_t) override;
@@ -144,17 +180,32 @@ public:
      */
     void setTransactionHangCallback(std::function<void(const std::string&)> callback);
     void setApplyToken(sp<IBinder>);
+
+    void setWaitForBufferReleaseCallback(std::function<void(const nsecs_t)> callback)
+            EXCLUDES(mWaitForBufferReleaseMutex);
+    std::function<void(const nsecs_t)> getWaitForBufferReleaseCallback() const
+            EXCLUDES(mWaitForBufferReleaseMutex);
+
     virtual ~BLASTBufferQueue();
 
     void onFirstRef() override;
 
 private:
+    // Not public to ensure construction via sp<>::make().
+    BLASTBufferQueue(const std::string& name, bool updateDestinationFrame = true);
+
+    friend class sp<BLASTBufferQueue>;
     friend class BLASTBufferQueueHelper;
     friend class BBQBufferQueueProducer;
+    friend class TestBLASTBufferQueue;
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
     friend class BBQBufferQueueCore;
 #endif
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    friend class libguiextension::QtiBLASTBufferQueueExtension;
+    libguiextension::QtiBLASTBufferQueueExtension* mQtiBBQExtn = nullptr;
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     // can't be copied
     BLASTBufferQueue& operator = (const BLASTBufferQueue& rhs);
     BLASTBufferQueue(const BLASTBufferQueue& rhs);
@@ -186,11 +237,19 @@ private:
     sp<SurfaceControl> mSurfaceControl GUARDED_BY(mMutex);
 
     mutable std::mutex mMutex;
+    mutable std::mutex mWaitForBufferReleaseMutex;
     std::condition_variable mCallbackCV;
 
     // BufferQueue internally allows 1 more than
     // the max to be acquired
     int32_t mMaxAcquiredBuffers GUARDED_BY(mMutex) = 1;
+// QTI_BEGIN: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+// QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+// QTI_BEGIN: 2023-04-24: Performance: gui: Fix for thread safety
+    int mQtiNumUndequeued = 0;
+// QTI_END: 2023-04-24: Performance: gui: Fix for thread safety
+// QTI_BEGIN: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
+// QTI_END: 2023-02-15: Display: perf: recover the pre-rendering feature in the U
     int32_t mNumFrameAvailable GUARDED_BY(mMutex) = 0;
     int32_t mNumAcquired GUARDED_BY(mMutex) = 0;
 
@@ -201,7 +260,7 @@ private:
 
     // Keep a reference to the submitted buffers so we can release when surfaceflinger drops the
     // buffer or the buffer has been presented and a new buffer is ready to be presented.
-    std::unordered_map<ReleaseCallbackId, BufferItem, ReleaseBufferCallbackIdHash> mSubmitted
+    ftl::SmallMap<ReleaseCallbackId, BufferItem, kSubmittedBuffersMapSizeHint> mSubmitted
             GUARDED_BY(mMutex);
 
     // Keep a queue of the released buffers instead of immediately releasing
@@ -269,7 +328,7 @@ private:
     std::function<void(SurfaceComposerClient::Transaction*)> mTransactionReadyCallback
             GUARDED_BY(mMutex);
     SurfaceComposerClient::Transaction* mSyncTransaction GUARDED_BY(mMutex);
-    std::vector<std::tuple<uint64_t /* framenumber */, SurfaceComposerClient::Transaction>>
+    std::vector<std::pair<uint64_t /* framenumber */, SurfaceComposerClient::Transaction>>
             mPendingTransactions GUARDED_BY(mMutex);
 
     std::queue<std::pair<uint64_t, FrameTimelineInfo>> mPendingFrameTimelines GUARDED_BY(mMutex);
@@ -286,8 +345,8 @@ private:
     std::mutex mTimestampMutex;
     // Tracks buffer dequeue times by the client. This info is sent to SurfaceFlinger which uses
     // it for debugging purposes.
-    std::unordered_map<uint64_t /* bufferId */, nsecs_t> mDequeueTimestamps
-            GUARDED_BY(mTimestampMutex);
+    ftl::SmallMap<uint64_t /* bufferId */, nsecs_t, kDequeueTimestampsMapSizeHint>
+            mDequeueTimestamps GUARDED_BY(mTimestampMutex);
 
     // Keep track of SurfaceControls that have submitted a transaction and BBQ is waiting on a
     // callback for them.
@@ -324,6 +383,8 @@ private:
 
     std::unordered_set<uint64_t> mSyncedFrameNumbers GUARDED_BY(mMutex);
 
+    std::function<void(const nsecs_t)> mWaitForBufferReleaseCallback
+            GUARDED_BY(mWaitForBufferReleaseMutex);
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BUFFER_RELEASE_CHANNEL)
     // BufferReleaseChannel is used to communicate buffer releases from SurfaceFlinger to the
     // client.

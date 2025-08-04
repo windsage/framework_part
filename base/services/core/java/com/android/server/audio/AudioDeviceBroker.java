@@ -12,12 +12,36 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+// QTI_BEGIN: 2023-02-28: N/A: base: delay LE Audio device unavailability
+ *
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ *
+// QTI_END: 2023-02-28: N/A: base: delay LE Audio device unavailability
  */
 package com.android.server.audio;
 
 import static android.media.audio.Flags.scoManagedByAudio;
+import static android.media.AudioSystem.DEVICE_IN_ALL_SCO_SET;
+import static android.media.AudioSystem.DEVICE_IN_BLE_HEADSET;
+import static android.media.AudioSystem.DEVICE_IN_BLUETOOTH_SCO_HEADSET;
+import static android.media.AudioSystem.DEVICE_IN_USB_HEADSET;
+import static android.media.AudioSystem.DEVICE_IN_WIRED_HEADSET;
+import static android.media.AudioSystem.DEVICE_OUT_ALL_SCO_SET;
+import static android.media.AudioSystem.DEVICE_OUT_BLE_HEADSET;
+import static android.media.AudioSystem.DEVICE_OUT_BLUETOOTH_SCO;
+import static android.media.AudioSystem.DEVICE_OUT_BLUETOOTH_SCO_CARKIT;
+import static android.media.AudioSystem.DEVICE_OUT_BLUETOOTH_SCO_HEADSET;
+import static android.media.AudioSystem.DEVICE_OUT_BUS;
+import static android.media.AudioSystem.DEVICE_OUT_EARPIECE;
+import static android.media.AudioSystem.DEVICE_OUT_SPEAKER;
+import static android.media.AudioSystem.DEVICE_OUT_USB_HEADSET;
+import static android.media.AudioSystem.DEVICE_OUT_WIRED_HEADSET;
+import static android.media.AudioSystem.isBluetoothScoOutDevice;
 
 import static com.android.media.audio.Flags.equalScoLeaVcIndexRange;
+import static com.android.media.audio.Flags.optimizeBtDeviceSwitch;
 import static com.android.server.audio.AudioService.BT_COMM_DEVICE_ACTIVE_BLE_HEADSET;
 import static com.android.server.audio.AudioService.BT_COMM_DEVICE_ACTIVE_BLE_SPEAKER;
 import static com.android.server.audio.AudioService.BT_COMM_DEVICE_ACTIVE_SCO;
@@ -77,9 +101,11 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Set;
@@ -238,6 +264,9 @@ public class AudioDeviceBroker {
     private void init() {
         setupMessaging(mContext);
 
+// QTI_BEGIN: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
+        initScoParams();
+// QTI_END: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
         initAudioHalBluetoothState();
         initRoutingStrategyIds();
         mPreferredCommunicationDevice = null;
@@ -290,8 +319,8 @@ public class AudioDeviceBroker {
     }
 
     @GuardedBy("mDeviceStateLock")
-    /*package*/ void onSetBtScoActiveDevice(BluetoothDevice btDevice) {
-        mBtHelper.onSetBtScoActiveDevice(btDevice);
+    /*package*/ void onSetBtScoActiveDevice(BluetoothDevice btDevice, boolean deviceSwitch) {
+        mBtHelper.onSetBtScoActiveDevice(btDevice, deviceSwitch);
     }
 
     /*package*/ void setBluetoothA2dpOn_Async(boolean on, String source) {
@@ -513,9 +542,11 @@ public class AudioDeviceBroker {
     @GuardedBy("mDeviceStateLock")
     private CommunicationRouteClient topCommunicationRouteClient() {
         for (CommunicationRouteClient crc : mCommunicationRouteClients) {
-            if (crc.getUid() == mAudioModeOwner.mUid) {
+            if (crc.getUid() == mAudioModeOwner.mUid && !crc.isDisabled()) {
                 return crc;
+// QTI_BEGIN: 2019-03-15: Bluetooth: HFP: Porting changes for AudioService file
             }
+// QTI_END: 2019-03-15: Bluetooth: HFP: Porting changes for AudioService file
         }
         if (!mCommunicationRouteClients.isEmpty() && mAudioModeOwner.mPid == 0
                 && mCommunicationRouteClients.get(0).isActive()) {
@@ -573,36 +604,6 @@ public class AudioDeviceBroker {
         return false;
     }
 
-    /*package */
-    void postCheckCommunicationDeviceRemoval(@NonNull AudioDeviceAttributes device) {
-        if (!isValidCommunicationDeviceType(
-                AudioDeviceInfo.convertInternalDeviceToDeviceType(device.getInternalType()))) {
-            return;
-        }
-        sendLMsgNoDelay(MSG_L_CHECK_COMMUNICATION_DEVICE_REMOVAL, SENDMSG_QUEUE, device);
-    }
-
-    @GuardedBy("mDeviceStateLock")
-    void onCheckCommunicationDeviceRemoval(@NonNull AudioDeviceAttributes device) {
-        if (AudioService.DEBUG_COMM_RTE) {
-            Log.v(TAG, "onCheckCommunicationDeviceRemoval device: " + device.toString());
-        }
-        for (CommunicationRouteClient crc : mCommunicationRouteClients) {
-            if (device.equals(crc.getDevice())) {
-                if (AudioService.DEBUG_COMM_RTE) {
-                    Log.v(TAG, "onCheckCommunicationDeviceRemoval removing client: "
-                            + crc.toString());
-                }
-                // Cancelling the route for this client will remove it from the stack and update
-                // the communication route.
-                CommunicationDeviceInfo deviceInfo = new CommunicationDeviceInfo(
-                        crc.getBinder(), crc.getAttributionSource(), device, false,
-                        BtHelper.SCO_MODE_UNDEFINED, "onCheckCommunicationDeviceRemoval",
-                        crc.isPrivileged());
-                postSetCommunicationDeviceForClient(deviceInfo);
-            }
-        }
-    }
 
     // check playback or record activity after 6 seconds for UIDs
     private static final int CHECK_CLIENT_STATE_DELAY_MS = 6000;
@@ -635,7 +636,8 @@ public class AudioDeviceBroker {
         client.setPlaybackActive(mAudioService.isPlaybackActiveForUid(client.getUid()));
         client.setRecordingActive(mAudioService.isRecordingActiveForUid(client.getUid()));
         if (wasActive != client.isActive()) {
-            postUpdateCommunicationRouteClient(bluetoothScoRequestOwnerAttributionSource(),
+            postUpdateCommunicationRouteClient(wasActive ?
+                    client.getAttributionSource() : null,
                     "updateCommunicationRouteClientState");
         }
     }
@@ -940,6 +942,7 @@ public class AudioDeviceBroker {
         final @NonNull String mEventSource;
         final int mAudioSystemDevice;
         final int mMusicDevice;
+        final boolean mIsDeviceSwitch;
 
         BtDeviceInfo(@NonNull BtDeviceChangedData d, @NonNull BluetoothDevice device, int state,
                     int audioDevice, @AudioSystem.AudioFormatNativeEnumForBtCodec int codec) {
@@ -952,6 +955,8 @@ public class AudioDeviceBroker {
             mEventSource = d.mEventSource;
             mAudioSystemDevice = audioDevice;
             mMusicDevice = AudioSystem.DEVICE_NONE;
+            mIsDeviceSwitch = optimizeBtDeviceSwitch()
+                    && d.mNewDevice != null && d.mPreviousDevice != null;
         }
 
         // constructor used by AudioDeviceBroker to search similar message
@@ -965,6 +970,7 @@ public class AudioDeviceBroker {
             mSupprNoisy = false;
             mVolume = -1;
             mIsLeOutput = false;
+            mIsDeviceSwitch = false;
         }
 
         // constructor used by AudioDeviceInventory when config change failed
@@ -979,6 +985,7 @@ public class AudioDeviceBroker {
             mSupprNoisy = false;
             mVolume = -1;
             mIsLeOutput = false;
+            mIsDeviceSwitch = false;
         }
 
         BtDeviceInfo(@NonNull BtDeviceInfo src, int state) {
@@ -991,6 +998,7 @@ public class AudioDeviceBroker {
             mEventSource = src.mEventSource;
             mAudioSystemDevice = src.mAudioSystemDevice;
             mMusicDevice = src.mMusicDevice;
+            mIsDeviceSwitch = false;
         }
 
         // redefine equality op so we can match messages intended for this device
@@ -1025,42 +1033,15 @@ public class AudioDeviceBroker {
                             + " isLeOutput=" + mIsLeOutput
                             + " eventSource=" + mEventSource
                             + " audioSystemDevice=" + mAudioSystemDevice
-                            + " musicDevice=" + mMusicDevice;
+                            + " musicDevice=" + mMusicDevice
+                            + " isDeviceSwitch=" + mIsDeviceSwitch;
         }
     }
 
-    BtDeviceInfo createBtDeviceInfo(@NonNull BtDeviceChangedData d, @NonNull BluetoothDevice device,
-                int state) {
-        int audioDevice;
-        int codec = AudioSystem.AUDIO_FORMAT_DEFAULT;
-        switch (d.mInfo.getProfile()) {
-            case BluetoothProfile.A2DP_SINK:
-                audioDevice = AudioSystem.DEVICE_IN_BLUETOOTH_A2DP;
-                break;
-            case BluetoothProfile.A2DP:
-                audioDevice = AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP;
-                break;
-            case BluetoothProfile.HEARING_AID:
-                audioDevice = AudioSystem.DEVICE_OUT_HEARING_AID;
-                break;
-            case BluetoothProfile.LE_AUDIO:
-                if (d.mInfo.isLeOutput()) {
-                    audioDevice = AudioSystem.DEVICE_OUT_BLE_HEADSET;
-                } else {
-                    audioDevice = AudioSystem.DEVICE_IN_BLE_HEADSET;
-                }
-                break;
-            case BluetoothProfile.LE_AUDIO_BROADCAST:
-                audioDevice = AudioSystem.DEVICE_OUT_BLE_BROADCAST;
-                break;
-            case BluetoothProfile.HEADSET:
-                // the actual device type is not important at this point and
-                // will be set by BtHelper.handleBtScoActiveDeviceChange()
-                audioDevice = AudioSystem.DEVICE_OUT_BLUETOOTH_SCO;
-                break;
-            default: throw new IllegalArgumentException("Invalid profile " + d.mInfo.getProfile());
-        }
-        return new BtDeviceInfo(d, device, state, audioDevice, codec);
+    /*package*/ static BtDeviceInfo createBtDeviceInfo(@NonNull BtDeviceChangedData d,
+            @NonNull BluetoothDevice device, int state) {
+        int audioDevice = BtHelper.getTypeFromProfile(d.mInfo.getProfile(), d.mInfo.isLeOutput());
+        return new BtDeviceInfo(d, device, state, audioDevice, AudioSystem.AUDIO_FORMAT_DEFAULT);
     }
 
     private void btMediaMetricRecord(@NonNull BluetoothDevice device, String state,
@@ -1089,8 +1070,10 @@ public class AudioDeviceBroker {
                     .set(MediaMetrics.Property.STATUS, data.mInfo.getProfile())
                     .record();
             synchronized (mDeviceStateLock) {
+// QTI_BEGIN: 2024-05-11: N/A: base: Remove A2DP to A2DP quick SHO changes
                 postBluetoothDeviceConfigChange(createBtDeviceInfo(data, data.mNewDevice,
                         BluetoothProfile.STATE_CONNECTED));
+// QTI_END: 2024-05-11: N/A: base: Remove A2DP to A2DP quick SHO changes
             }
         } else {
             synchronized (mDeviceStateLock) {
@@ -1142,6 +1125,21 @@ public class AudioDeviceBroker {
     @GuardedBy("mBluetoothAudioStateLock")
     private boolean mBluetoothLeSuspendedApplied;
 
+// QTI_BEGIN: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
+    // SCO SWB params
+    @GuardedBy("mBluetoothAudioStateLock")
+    private boolean mHasSwbLc3Enabled;
+    @GuardedBy("mBluetoothAudioStateLock")
+    private boolean mHasSwbAptXEnabled;
+    // SCO params
+    @GuardedBy("mBluetoothAudioStateLock")
+    private String mBtHeadsetName;
+    @GuardedBy("mBluetoothAudioStateLock")
+    private boolean mHasNrecEnabled;
+    @GuardedBy("mBluetoothAudioStateLock")
+    private boolean mHasWbsEnabled;
+
+// QTI_END: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
     private void initAudioHalBluetoothState() {
         synchronized (mBluetoothAudioStateLock) {
             mBluetoothScoOnApplied = false;
@@ -1151,6 +1149,49 @@ public class AudioDeviceBroker {
         }
     }
 
+// QTI_BEGIN: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
+    private void initScoParams() {
+        synchronized (mBluetoothAudioStateLock) {
+            mHasSwbLc3Enabled = false;
+            mHasSwbAptXEnabled = false;
+            mBtHeadsetName = "";
+            mHasNrecEnabled = false;
+            mHasWbsEnabled = false;
+        }
+    }
+
+    void setSwbParameters(String keyValuePairs) {
+        synchronized (mBluetoothAudioStateLock) {
+            Log.i(TAG, "received " + keyValuePairs);
+            String[] kvpairs = keyValuePairs.split(";");
+            for (String pair : kvpairs) {
+                String[] kv = pair.split("=");
+// QTI_END: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
+// QTI_BEGIN: 2024-08-22: Audio: Fix string comparison for received SCO params
+                if (kv[0].equals("bt_lc3_swb")) {
+                    mHasSwbLc3Enabled = ((kv[1].equals("on")) ? true : false);
+                } else if (kv[0].equals("bt_swb")) {
+                    mHasSwbAptXEnabled = ((kv[1].equals("0")) ? true : false);
+// QTI_END: 2024-08-22: Audio: Fix string comparison for received SCO params
+// QTI_BEGIN: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
+                }
+            }
+        }
+    }
+
+    void setScoParameters(String name, boolean hasNrecEnabled,
+            boolean hasWbsEnabled) {
+        synchronized (mBluetoothAudioStateLock) {
+            Log.i(TAG, "received btHeadsetName=" + name
+                    + ";hasNrecEnabled=" + hasNrecEnabled
+                    + ";hasWbsEnabled=" + hasWbsEnabled + ";");
+            mBtHeadsetName = name;
+            mHasNrecEnabled = hasNrecEnabled;
+            mHasWbsEnabled = hasWbsEnabled;
+        }
+    }
+
+// QTI_END: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
     @GuardedBy("mBluetoothAudioStateLock")
     private void updateAudioHalBluetoothState() {
         if (mBluetoothScoOn != mBluetoothScoOnApplied) {
@@ -1167,6 +1208,14 @@ public class AudioDeviceBroker {
                     AudioSystem.setParameters("LeAudioSuspended=true");
                     mBluetoothLeSuspendedApplied = true;
                 }
+// QTI_BEGIN: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
+                // set SCO related parameters before sending SCO on
+                AudioSystem.setParameters("bt_lc3_swb=" + (mHasSwbLc3Enabled ? "on" : "off"));
+                AudioSystem.setParameters("bt_swb=" + (mHasSwbAptXEnabled ? "0" : "65535"));
+                AudioSystem.setParameters("bt_headset_name=" + mBtHeadsetName
+                        + ";bt_headset_nrec=" + (mHasNrecEnabled ? "on" : "off")
+                        + ";bt_wbs=" + (mHasWbsEnabled ? "on" : "off"));
+// QTI_END: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
                 AudioSystem.setParameters("BT_SCO=on");
             } else {
                 AudioSystem.setParameters("BT_SCO=off");
@@ -1222,7 +1271,17 @@ public class AudioDeviceBroker {
         if (mBluetoothScoOnApplied) {
             AudioSystem.setParameters("A2dpSuspended=true");
             AudioSystem.setParameters("LeAudioSuspended=true");
+// QTI_BEGIN: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
+            // apply cached SCO parameters before sending SCO on
+            AudioSystem.setParameters("bt_lc3_swb=" + (mHasSwbLc3Enabled ? "on" : "off"));
+            AudioSystem.setParameters("bt_swb=" + (mHasSwbAptXEnabled ? "0" : "65535"));
+            AudioSystem.setParameters("bt_headset_name=" + mBtHeadsetName
+                    + ";bt_headset_nrec=" + (mHasNrecEnabled ? "on" : "off")
+                    + ";bt_wbs=" + (mHasWbsEnabled ? "on" : "off"));
+// QTI_END: 2024-07-18: Audio: Route SCO related params through AudioDeviceBroker to AHAL
             AudioSystem.setParameters("BT_SCO=on");
+            mBluetoothA2dpSuspendedApplied = true;
+            mBluetoothLeSuspendedApplied = true;
         } else {
             AudioSystem.setParameters("BT_SCO=off");
             if (mBluetoothA2dpSuspendedApplied) {
@@ -1501,8 +1560,8 @@ public class AudioDeviceBroker {
         mAudioService.postAccessoryPlugMediaUnmute(device);
     }
 
-    /*package*/ int getVssVolumeForDevice(int streamType, int device) {
-        return mAudioService.getVssVolumeForDevice(streamType, device);
+    /*package*/ int getVolumeForDeviceIgnoreMute(int streamType, int device) {
+        return mAudioService.getVolumeForDeviceIgnoreMute(streamType, device);
     }
 
     /*package*/ int getMaxVssVolumeForStream(int streamType) {
@@ -1707,10 +1766,21 @@ public class AudioDeviceBroker {
     }
 
     /*package*/ boolean handleDeviceConnection(@NonNull AudioDeviceAttributes attributes,
-                                boolean connect, @Nullable BluetoothDevice btDevice) {
+                                boolean connect, @Nullable BluetoothDevice btDevice,
+                                boolean deviceSwitch) {
         synchronized (mDeviceStateLock) {
-            return mDeviceInventory.handleDeviceConnection(
-                    attributes, connect, false /*for test*/, btDevice);
+            boolean status =  mDeviceInventory.handleDeviceConnection(
+                    attributes, connect, false /*for test*/, btDevice, deviceSwitch);
+            if (isValidCommunicationDeviceType(attributes.getType())
+                    || mDuplexCommunicationDevices.containsValue(attributes.getInternalType())) {
+                checkCommunicationRouteClientsDevices();
+                if (connect || !deviceSwitch) {
+                    onUpdateCommunicationRouteClient(
+                            bluetoothScoRequestOwnerAttributionSource(),
+                            "handleDeviceConnection");
+                }
+            }
+            return status;
         }
     }
 
@@ -1727,8 +1797,8 @@ public class AudioDeviceBroker {
     }
 
     // must be called synchronized on mConnectedDevices
-    /*package*/ boolean hasScheduledA2dpConnection(BluetoothDevice btDevice) {
-        final BtDeviceInfo devInfoToCheck = new BtDeviceInfo(btDevice, BluetoothProfile.A2DP);
+    /*package*/ boolean hasScheduledA2dpConnection(BluetoothDevice btDevice, int profile) {
+        final BtDeviceInfo devInfoToCheck = new BtDeviceInfo(btDevice, profile);
         return mBrokerHandler.hasEqualMessages(MSG_L_SET_BT_ACTIVE_DEVICE, devInfoToCheck);
     }
 
@@ -1738,8 +1808,10 @@ public class AudioDeviceBroker {
 
     /*package*/ void setLeAudioTimeout(String address, int device, int codec, int delayMs) {
         sendIILMsg(MSG_IIL_BTLEAUDIO_TIMEOUT, SENDMSG_QUEUE, device, codec, address, delayMs);
+// QTI_BEGIN: 2023-02-28: N/A: base: delay LE Audio device unavailability
     }
 
+// QTI_END: 2023-02-28: N/A: base: delay LE Audio device unavailability
     /*package*/ void setHearingAidTimeout(String address, int delayMs) {
         sendLMsg(MSG_IL_BT_HEARING_AID_TIMEOUT, SENDMSG_QUEUE, address, delayMs);
     }
@@ -1802,6 +1874,18 @@ public class AudioDeviceBroker {
         pw.println("\n" + prefix + "mAudioModeOwner: " + mAudioModeOwner);
 
         pw.println("\n" + prefix + "mScoManagedByAudio: " + mScoManagedByAudio);
+
+        pw.println("\n" + prefix + "Bluetooth SCO on"
+                + ", requested: " + mBluetoothScoOn
+                + ", applied: " + mBluetoothScoOnApplied);
+        pw.println("\n" + prefix +  "Bluetooth A2DP suspended"
+                + ", requested ext: " + mBluetoothA2dpSuspendedExt
+                + ", requested int: " + mBluetoothA2dpSuspendedInt
+                + ", applied " + mBluetoothA2dpSuspendedApplied);
+        pw.println("\n" + prefix +  "Bluetooth LE Audio suspended"
+                + ", requested ext: " + mBluetoothLeSuspendedExt
+                + ", requested int: " + mBluetoothLeSuspendedInt
+                + ", applied " + mBluetoothLeSuspendedApplied);
 
         mBtHelper.dump(pw, prefix);
     }
@@ -1961,9 +2045,13 @@ public class AudioDeviceBroker {
                                         || btInfo.mProfile == BluetoothProfile.HEARING_AID
                                         || (mScoManagedByAudio
                                             && btInfo.mProfile == BluetoothProfile.HEADSET)) {
-                                    onUpdateCommunicationRouteClient(
+                                    checkCommunicationRouteClientsDevices();
+                                    if (btInfo.mState == BluetoothProfile.STATE_CONNECTED
+                                            || !btInfo.mIsDeviceSwitch) {
+                                        onUpdateCommunicationRouteClient(
                                             bluetoothScoRequestOwnerAttributionSource(),
                                             "setBluetoothActiveDevice");
+                                    }
                                 }
                             }
                         }
@@ -2125,13 +2213,6 @@ public class AudioDeviceBroker {
                     final BluetoothDevice btDevice = (BluetoothDevice) msg.obj;
                     BtHelper.onNotifyPreferredAudioProfileApplied(btDevice);
                 } break;
-                case MSG_L_CHECK_COMMUNICATION_DEVICE_REMOVAL: {
-                    synchronized (mSetModeLock) {
-                        synchronized (mDeviceStateLock) {
-                            onCheckCommunicationDeviceRemoval((AudioDeviceAttributes) msg.obj);
-                        }
-                    }
-                } break;
                 case MSG_PERSIST_AUDIO_DEVICE_SETTINGS:
                     onPersistAudioDeviceSettings();
                     break;
@@ -2208,9 +2289,6 @@ public class AudioDeviceBroker {
     private static final int MSG_I_BT_SERVICE_DISCONNECTED_PROFILE = 22;
     private static final int MSG_IL_BT_SERVICE_CONNECTED_PROFILE = 23;
 
-    // process external command to (dis)connect an A2DP device, obj is BtDeviceConnectionInfo
-    private static final int MSG_L_A2DP_DEVICE_CONNECTION_CHANGE_EXT = 29;
-
     // process external command to (dis)connect a hearing aid device
     private static final int MSG_L_HEARING_AID_DEVICE_CONNECTION_CHANGE_EXT = 31;
 
@@ -2229,7 +2307,6 @@ public class AudioDeviceBroker {
     private static final int MSG_IIL_BTLEAUDIO_TIMEOUT = 49;
 
     private static final int MSG_L_NOTIFY_PREFERRED_AUDIOPROFILE_APPLIED = 52;
-    private static final int MSG_L_CHECK_COMMUNICATION_DEVICE_REMOVAL = 53;
 
     private static final int MSG_PERSIST_AUDIO_DEVICE_SETTINGS = 54;
 
@@ -2250,7 +2327,6 @@ public class AudioDeviceBroker {
             case MSG_IIL_BTLEAUDIO_TIMEOUT:
             case MSG_L_BLUETOOTH_DEVICE_CONFIG_CHANGE:
             case MSG_TOGGLE_HDMI:
-            case MSG_L_A2DP_DEVICE_CONNECTION_CHANGE_EXT:
             case MSG_L_HEARING_AID_DEVICE_CONNECTION_CHANGE_EXT:
             case MSG_CHECK_MUTE_MUSIC:
             case MSG_IL_BT_HEARING_AID_TIMEOUT:
@@ -2376,7 +2452,6 @@ public class AudioDeviceBroker {
         MESSAGES_MUTE_MUSIC = new HashSet<>();
         MESSAGES_MUTE_MUSIC.add(MSG_L_SET_BT_ACTIVE_DEVICE);
         MESSAGES_MUTE_MUSIC.add(MSG_L_BLUETOOTH_DEVICE_CONFIG_CHANGE);
-        MESSAGES_MUTE_MUSIC.add(MSG_L_A2DP_DEVICE_CONNECTION_CHANGE_EXT);
         MESSAGES_MUTE_MUSIC.add(MSG_L_SET_FORCE_BT_A2DP_USE);
     }
 
@@ -2395,8 +2470,9 @@ public class AudioDeviceBroker {
         }
         // Do not mute on bluetooth event if music is playing on a wired headset.
         if ((message == MSG_L_SET_BT_ACTIVE_DEVICE
-                || message == MSG_L_A2DP_DEVICE_CONNECTION_CHANGE_EXT
+// QTI_BEGIN: 2024-05-11: N/A: base: Remove A2DP to A2DP quick SHO changes
                 || message == MSG_L_BLUETOOTH_DEVICE_CONFIG_CHANGE)
+// QTI_END: 2024-05-11: N/A: base: Remove A2DP to A2DP quick SHO changes
                 && AudioSystem.isStreamActive(AudioSystem.STREAM_MUSIC, 0)
                 && hasIntersection(mDeviceInventory.DEVICE_OVERRIDE_A2DP_ROUTE_ON_PLUG_SET,
                         mAudioService.getDeviceSetForStream(AudioSystem.STREAM_MUSIC))) {
@@ -2433,18 +2509,21 @@ public class AudioDeviceBroker {
         private final IBinder mCb;
         @NonNull private final AttributionSource mAttributionSource;
         private final boolean mIsPrivileged;
-        private AudioDeviceAttributes mDevice;
+        @NonNull private AudioDeviceAttributes mDevice;
         private boolean mPlaybackActive;
         private boolean mRecordingActive;
 
+        private boolean mDisabled;
+
         CommunicationRouteClient(IBinder cb, @NonNull AttributionSource attributionSource,
-                AudioDeviceAttributes device, boolean isPrivileged) {
+                @NonNull AudioDeviceAttributes device, boolean isPrivileged) {
             mCb = cb;
             mAttributionSource = attributionSource;
             mDevice = device;
             mIsPrivileged = isPrivileged;
             mPlaybackActive = mAudioService.isPlaybackActiveForUid(attributionSource.getUid());
             mRecordingActive = mAudioService.isRecordingActiveForUid(attributionSource.getUid());
+            mDisabled = false;
         }
 
         public boolean registerDeathRecipient() {
@@ -2487,7 +2566,10 @@ public class AudioDeviceBroker {
             return mIsPrivileged;
         }
 
-        AudioDeviceAttributes getDevice() {
+        void setDevice(@NonNull AudioDeviceAttributes device) {
+            mDevice = device;
+        }
+        @NonNull AudioDeviceAttributes getDevice() {
             return mDevice;
         }
 
@@ -2500,7 +2582,14 @@ public class AudioDeviceBroker {
         }
 
         public boolean isActive() {
-            return mIsPrivileged || mRecordingActive || mPlaybackActive;
+            return !mDisabled && (mIsPrivileged || mRecordingActive || mPlaybackActive);
+        }
+
+        public void setDisabled(boolean disabled) {
+            mDisabled = disabled;
+        }
+        public boolean isDisabled() {
+            return mDisabled;
         }
 
         @Override
@@ -2509,7 +2598,8 @@ public class AudioDeviceBroker {
                     + " mDevice: " + mDevice.toString()
                     + " mIsPrivileged: " + mIsPrivileged
                     + " mPlaybackActive: " + mPlaybackActive
-                    + " mRecordingActive: " + mRecordingActive + "]";
+                    + " mRecordingActive: " + mRecordingActive
+                    + " mDisabled: " + mDisabled + "]";
         }
     }
 
@@ -2544,7 +2634,9 @@ public class AudioDeviceBroker {
             // what has been communicated to audio policy manager. The device
             // returned by requestedCommunicationDevice() can be a placeholder SCO device if legacy
             // APIs are used to start SCO audio.
-            AudioDeviceAttributes device = mBtHelper.getHeadsetAudioDevice();
+// QTI_BEGIN: 2021-09-01: Bluetooth: HFP: Porting the change in BtHelper to avoid extra device switch
+            AudioDeviceAttributes device = mBtHelper.getHeadsetAudioDummyDevice();
+// QTI_END: 2021-09-01: Bluetooth: HFP: Porting the change in BtHelper to avoid extra device switch
             if (device != null) {
                 return device;
             }
@@ -2595,6 +2687,76 @@ public class AudioDeviceBroker {
         onUpdatePhoneStrategyDevice(preferredCommunicationDevice);
     }
 
+    // Pairs of input and output devices for duplex communication devices (headsets)
+    private final HashMap<Integer, Integer> mDuplexCommunicationDevices = new HashMap<>(
+            Map.of(DEVICE_OUT_BLE_HEADSET, DEVICE_IN_BLE_HEADSET,
+                DEVICE_OUT_WIRED_HEADSET, DEVICE_IN_WIRED_HEADSET,
+                DEVICE_OUT_USB_HEADSET, DEVICE_IN_USB_HEADSET,
+                DEVICE_OUT_BLUETOOTH_SCO, DEVICE_IN_BLUETOOTH_SCO_HEADSET,
+                DEVICE_OUT_BLUETOOTH_SCO_HEADSET, DEVICE_IN_BLUETOOTH_SCO_HEADSET,
+                DEVICE_OUT_BLUETOOTH_SCO_CARKIT, DEVICE_IN_BLUETOOTH_SCO_HEADSET
+            ));
+    /**
+     * Scan communication route clients and disable them if their selected device is not connected
+     * or re-enable them if a device of the same type as their connected device is connected
+     */
+    // @GuardedBy("mSetModeLock")
+    @GuardedBy("mDeviceStateLock")
+    private void checkCommunicationRouteClientsDevices() {
+        for (CommunicationRouteClient crc : mCommunicationRouteClients) {
+            int deviceType = crc.getDevice().getInternalType();
+            // Skip non detachable devices
+            if (deviceType == DEVICE_OUT_EARPIECE || deviceType == DEVICE_OUT_SPEAKER
+                    || deviceType == DEVICE_OUT_BUS) {
+                continue;
+            }
+
+            // outDeviceSet is the expected connected output device types for the requested device
+            Set<Integer> outDeviceSet = null;
+            // inDeviceSet is the expected input device for outDeviceSet. Null for non
+            // duplex devices
+            Set<Integer> inDeviceSet = null;
+            // Special case for SCO because several device types are equivalent
+            if (isBluetoothScoOutDevice(deviceType)) {
+                outDeviceSet = DEVICE_OUT_ALL_SCO_SET;
+                inDeviceSet = DEVICE_IN_ALL_SCO_SET;
+            } else {
+                outDeviceSet = new HashSet<>();
+                outDeviceSet.add(deviceType);
+                if (mDuplexCommunicationDevices.containsKey(deviceType)) {
+                    inDeviceSet = new HashSet<>();
+                    inDeviceSet.add(mDuplexCommunicationDevices.get(deviceType));
+                }
+            }
+
+            AudioDeviceAttributes outAda =
+                    mDeviceInventory.getFirstConnectedDeviceAttributesOfTypes(outDeviceSet);
+            AudioDeviceAttributes inAda = (inDeviceSet == null) ? null
+                    : mDeviceInventory.getFirstConnectedDeviceAttributesOfTypes(inDeviceSet);
+
+            // A device is fully connected if the output device is connect and if not duplex
+            // or an input device with the same address is connected
+            boolean fullyConnected = outAda != null && (inDeviceSet == null
+                    || (inAda != null && inAda.getAddress().equals(outAda.getAddress())));
+
+            if (fullyConnected) {
+                crc.setDevice(outAda);
+                if (crc.isDisabled()) {
+                    crc.setDisabled(false);
+                    if (AudioService.DEBUG_COMM_RTE) {
+                        Log.v(TAG,
+                                "checkCommunicationRouteClientsDevices, enabling client: " + crc);
+                    }
+                }
+            } else if (!crc.isDisabled()) {
+                crc.setDisabled(true);
+                if (AudioService.DEBUG_COMM_RTE) {
+                    Log.v(TAG, "checkCommunicationRouteClientsDevices, disabling client: " + crc);
+                }
+            }
+        }
+    }
+
     /**
      * Select new communication device from communication route client at the top of the stack
      * and restore communication route including restarting SCO audio if needed.
@@ -2603,6 +2765,7 @@ public class AudioDeviceBroker {
     @GuardedBy("mDeviceStateLock")
     private void onUpdateCommunicationRouteClient(
             @Nullable AttributionSource previousBtScoRequesterAS, String eventSource) {
+
         CommunicationRouteClient crc = topCommunicationRouteClient();
         if (AudioService.DEBUG_COMM_RTE) {
             Log.v(TAG, "onUpdateCommunicationRouteClient, crc: " + crc

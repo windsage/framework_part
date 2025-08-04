@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Center
+ */
+
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #include <inttypes.h>
 
 #define LOG_TAG "BufferQueueProducer"
@@ -40,11 +48,18 @@
 #include <gui/TraceUtils.h>
 #include <private/gui/BufferQueueThreadState.h>
 
+#include <utils/Errors.h>
 #include <utils/Log.h>
 #include <utils/Trace.h>
 
 #include <system/window.h>
 
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+#ifdef QTI_DISPLAY_EXTENSION
+#include "QtiExtension/QtiBufferQueueProducerExtension.h"
+#endif
+
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 #include <com_android_graphics_libgui_flags.h>
 
 namespace android {
@@ -89,7 +104,17 @@ BufferQueueProducer::BufferQueueProducer(const sp<BufferQueueCore>& core,
     mCurrentCallbackTicket(0),
     mCallbackCondition(),
     mDequeueTimeout(-1),
-    mDequeueWaitingForAllocation(false) {}
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+    mDequeueWaitingForAllocation(false) {
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+#ifdef QTI_DISPLAY_EXTENSION
+    if (!mQtiBQPExtn) {
+        mQtiBQPExtn = new libguiextension::QtiBufferQueueProducerExtension(this);
+    }
+#endif
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+}
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
 
 BufferQueueProducer::~BufferQueueProducer() {}
 
@@ -108,9 +133,9 @@ status_t BufferQueueProducer::requestBuffer(int slot, sp<GraphicBuffer>* buf) {
         return NO_INIT;
     }
 
-    if (slot < 0 || slot >= BufferQueueDefs::NUM_BUFFER_SLOTS) {
-        BQ_LOGE("requestBuffer: slot index %d out of range [0, %d)",
-                slot, BufferQueueDefs::NUM_BUFFER_SLOTS);
+    int maxSlot = mCore->getTotalSlotCountLocked();
+    if (slot < 0 || slot >= maxSlot) {
+        BQ_LOGE("requestBuffer: slot index %d out of range [0, %d)", slot, maxSlot);
         return BAD_VALUE;
     } else if (!mSlots[slot].mBufferState.isDequeued()) {
         BQ_LOGE("requestBuffer: slot %d is not owned by the producer "
@@ -122,6 +147,49 @@ status_t BufferQueueProducer::requestBuffer(int slot, sp<GraphicBuffer>* buf) {
     *buf = mSlots[slot].mGraphicBuffer;
     return NO_ERROR;
 }
+
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+status_t BufferQueueProducer::extendSlotCount(int size) {
+    ATRACE_CALL();
+
+    sp<IConsumerListener> listener;
+    {
+        std::lock_guard<std::mutex> lock(mCore->mMutex);
+        BQ_LOGV("extendSlotCount: size %d", size);
+
+        if (mCore->mIsAbandoned) {
+            BQ_LOGE("extendSlotCount: BufferQueue has been abandoned");
+            return NO_INIT;
+        }
+
+        if (!mCore->mAllowExtendedSlotCount) {
+            BQ_LOGE("extendSlotCount: Consumer did not allow unlimited slots");
+            return INVALID_OPERATION;
+        }
+
+        int maxBeforeExtension = mCore->mMaxBufferCount;
+
+        if (size == maxBeforeExtension) {
+            return NO_ERROR;
+        }
+
+        if (size < maxBeforeExtension) {
+            return BAD_VALUE;
+        }
+
+        if (status_t ret = mCore->extendSlotCountLocked(size); ret != OK) {
+            return ret;
+        }
+        listener = mCore->mConsumerListener;
+    }
+
+    if (listener) {
+        listener->onSlotCountChanged(size);
+    }
+
+    return NO_ERROR;
+}
+#endif
 
 status_t BufferQueueProducer::setMaxDequeuedBufferCount(
         int maxDequeuedBuffers) {
@@ -167,13 +235,19 @@ status_t BufferQueueProducer::setMaxDequeuedBufferCount(int maxDequeuedBuffers,
             return BAD_VALUE;
         }
 
-        int bufferCount = mCore->getMinUndequeuedBufferCountLocked();
-        bufferCount += maxDequeuedBuffers;
+// QTI_BEGIN: 2023-05-08: Video: libgui: reset buffer count to max slots instead of returning BAD_VALUE.
+        int minUndequedBufferCount = mCore->getMinUndequeuedBufferCountLocked();
+        int bufferCount = minUndequedBufferCount + maxDequeuedBuffers;
+// QTI_END: 2023-05-08: Video: libgui: reset buffer count to max slots instead of returning BAD_VALUE.
 
-        if (bufferCount > BufferQueueDefs::NUM_BUFFER_SLOTS) {
+        if (bufferCount > mCore->getTotalSlotCountLocked()) {
             BQ_LOGE("setMaxDequeuedBufferCount: bufferCount %d too large "
-                    "(max %d)", bufferCount, BufferQueueDefs::NUM_BUFFER_SLOTS);
-            return BAD_VALUE;
+                    "(max %d)",
+                    bufferCount, mCore->getTotalSlotCountLocked());
+// QTI_BEGIN: 2023-05-08: Video: libgui: reset buffer count to max slots instead of returning BAD_VALUE.
+            bufferCount = BufferQueueDefs::NUM_BUFFER_SLOTS;
+            maxDequeuedBuffers = bufferCount - minUndequedBufferCount;
+// QTI_END: 2023-05-08: Video: libgui: reset buffer count to max slots instead of returning BAD_VALUE.
         }
 
         const int minBufferSlots = mCore->getMinMaxBufferCountLocked();
@@ -319,8 +393,10 @@ status_t BufferQueueProducer::waitForFreeSlotThenRelock(FreeSlotCaller caller,
         // Producers are not allowed to dequeue more than
         // mMaxDequeuedBufferCount buffers.
         // This check is only done if a buffer has already been queued
-        if (mCore->mBufferHasBeenQueued &&
-                dequeuedCount >= mCore->mMaxDequeuedBufferCount) {
+        using namespace com::android::graphics::libgui::flags;
+        bool flagGatedBufferHasBeenQueued =
+                bq_always_use_max_dequeued_buffer_count() || mCore->mBufferHasBeenQueued;
+        if (flagGatedBufferHasBeenQueued && dequeuedCount >= mCore->mMaxDequeuedBufferCount) {
             // Supress error logs when timeout is non-negative.
             if (mDequeueTimeout < 0) {
                 BQ_LOGE("%s: attempting to exceed the max dequeued buffer "
@@ -648,11 +724,11 @@ status_t BufferQueueProducer::dequeueBuffer(int* outSlot, sp<android::Fence>* ou
                 .requestorName = {mConsumerName.c_str(), mConsumerName.size()},
                 .extras = std::move(tempOptions),
         };
-        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(allocRequest);
+        sp<GraphicBuffer> graphicBuffer = sp<GraphicBuffer>::make(allocRequest);
 #else
         sp<GraphicBuffer> graphicBuffer =
-                new GraphicBuffer(width, height, format, BQ_LAYER_COUNT, usage,
-                                  {mConsumerName.c_str(), mConsumerName.size()});
+                sp<GraphicBuffer>::make(width, height, format, BQ_LAYER_COUNT, usage,
+                                        std::string{mConsumerName.c_str(), mConsumerName.size()});
 #endif
 
         status_t error = graphicBuffer->initCheck();
@@ -756,9 +832,9 @@ status_t BufferQueueProducer::detachBuffer(int slot) {
             return BAD_VALUE;
         }
 
-        if (slot < 0 || slot >= BufferQueueDefs::NUM_BUFFER_SLOTS) {
-            BQ_LOGE("detachBuffer: slot index %d out of range [0, %d)",
-                    slot, BufferQueueDefs::NUM_BUFFER_SLOTS);
+        const int totalSlotCount = mCore->getTotalSlotCountLocked();
+        if (slot < 0 || slot >= totalSlotCount) {
+            BQ_LOGE("detachBuffer: slot index %d out of range [0, %d)", slot, totalSlotCount);
             return BAD_VALUE;
         } else if (!mSlots[slot].mBufferState.isDequeued()) {
             // TODO(http://b/140581935): This message is BQ_LOGW because it
@@ -971,6 +1047,15 @@ status_t BufferQueueProducer::queueBuffer(int slot,
             return BAD_VALUE;
     }
 
+// QTI_BEGIN: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
+#ifdef QTI_DISPLAY_EXTENSION
+    if (mQtiBQPExtn) {
+        mQtiBQPExtn->qtiQueueBuffer(isAutoTimestamp, requestedPresentTimestamp,
+                                    mCore->mConnectedApi);
+    }
+#endif
+
+// QTI_END: 2023-04-02: Performance: gui: Introduce QTI Extensions in AOSP
     sp<IConsumerListener> frameAvailableListener;
     sp<IConsumerListener> frameReplacedListener;
     int callbackTicket = 0;
@@ -993,9 +1078,9 @@ status_t BufferQueueProducer::queueBuffer(int slot,
             return NO_INIT;
         }
 
-        if (slot < 0 || slot >= BufferQueueDefs::NUM_BUFFER_SLOTS) {
-            BQ_LOGE("queueBuffer: slot index %d out of range [0, %d)",
-                    slot, BufferQueueDefs::NUM_BUFFER_SLOTS);
+        const int totalSlotCount = mCore->getTotalSlotCountLocked();
+        if (slot < 0 || slot >= totalSlotCount) {
+            BQ_LOGE("queueBuffer: slot index %d out of range [0, %d)", slot, totalSlotCount);
             return BAD_VALUE;
         } else if (!mSlots[slot].mBufferState.isDequeued()) {
             BQ_LOGE("queueBuffer: slot %d is not owned by the producer "
@@ -1239,9 +1324,9 @@ status_t BufferQueueProducer::cancelBuffer(int slot, const sp<Fence>& fence) {
             return BAD_VALUE;
         }
 
-        if (slot < 0 || slot >= BufferQueueDefs::NUM_BUFFER_SLOTS) {
-            BQ_LOGE("cancelBuffer: slot index %d out of range [0, %d)", slot,
-                    BufferQueueDefs::NUM_BUFFER_SLOTS);
+        const int totalSlotCount = mCore->getTotalSlotCountLocked();
+        if (slot < 0 || slot >= totalSlotCount) {
+            BQ_LOGE("cancelBuffer: slot index %d out of range [0, %d)", slot, totalSlotCount);
             return BAD_VALUE;
         } else if (!mSlots[slot].mBufferState.isDequeued()) {
             BQ_LOGE("cancelBuffer: slot %d is not owned by the producer "
@@ -1409,6 +1494,9 @@ status_t BufferQueueProducer::connect(const sp<IProducerListener>& listener,
             output->nextFrameNumber = mCore->mFrameCounter + 1;
             output->bufferReplaced = false;
             output->maxBufferCount = mCore->mMaxBufferCount;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+            output->isSlotExpansionAllowed = mCore->mAllowExtendedSlotCount;
+#endif
 
             if (listener != nullptr) {
                 // Set up a death notification so that we can disconnect
@@ -1416,7 +1504,7 @@ status_t BufferQueueProducer::connect(const sp<IProducerListener>& listener,
 #ifndef NO_BINDER
                 if (IInterface::asBinder(listener)->remoteBinder() != nullptr) {
                     status = IInterface::asBinder(listener)->linkToDeath(
-                            static_cast<IBinder::DeathRecipient*>(this));
+                            sp<IBinder::DeathRecipient>::fromExisting(this));
                     if (status != NO_ERROR) {
                         BQ_LOGE("connect: linkToDeath failed: %s (%d)",
                                 strerror(-status), status);
@@ -1505,8 +1593,7 @@ status_t BufferQueueProducer::disconnect(int api, DisconnectMode mode) {
                                 IInterface::asBinder(mCore->mLinkedToDeath);
                         // This can fail if we're here because of the death
                         // notification, but we just ignore it
-                        token->unlinkToDeath(
-                                static_cast<IBinder::DeathRecipient*>(this));
+                        token->unlinkToDeath(static_cast<IBinder::DeathRecipient*>(this));
                     }
 #endif
                     mCore->mSharedBufferSlot =
@@ -1637,11 +1724,11 @@ void BufferQueueProducer::allocateBuffers(uint32_t width, uint32_t height,
 #endif
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(BQ_EXTENDEDALLOCATE)
-        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(allocRequest);
+        sp<GraphicBuffer> graphicBuffer = sp<GraphicBuffer>::make(allocRequest);
 #else
-        sp<GraphicBuffer> graphicBuffer = new GraphicBuffer(
-                allocWidth, allocHeight, allocFormat, BQ_LAYER_COUNT,
-                allocUsage, allocName);
+        sp<GraphicBuffer> graphicBuffer =
+                sp<GraphicBuffer>::make(allocWidth, allocHeight, allocFormat, BQ_LAYER_COUNT,
+                                        allocUsage, allocName);
 #endif
 
         status_t result = graphicBuffer->initCheck();

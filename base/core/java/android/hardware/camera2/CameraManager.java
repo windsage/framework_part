@@ -29,6 +29,9 @@ import android.annotation.RequiresPermission;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
+// QTI_BEGIN: 2018-03-10: Camera: Expose Aux camera to apps present in the whitelist
+import android.app.ActivityThread;
+// QTI_END: 2018-03-10: Camera: Expose Aux camera to apps present in the whitelist
 import android.app.ActivityManager;
 import android.app.CameraCompatTaskInfo;
 import android.app.TaskInfo;
@@ -67,17 +70,22 @@ import android.os.Handler;
 import android.os.HandlerExecutor;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.ServiceSpecificException;
 import android.os.SystemProperties;
+// QTI_BEGIN: 2018-03-10: Camera: Expose Aux camera to apps present in the whitelist
 import android.text.TextUtils;
+import android.util.Log;
+// QTI_END: 2018-03-10: Camera: Expose Aux camera to apps present in the whitelist
 import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Log;
 import android.util.Pair;
 import android.util.Size;
 import android.view.Display;
+import android.window.DesktopModeFlags;
 
 import com.android.internal.camera.flags.Flags;
 import com.android.internal.util.ArrayUtils;
@@ -591,8 +599,7 @@ public final class CameraManager {
 
     /** @hide */
     public int getDevicePolicyFromContext(@NonNull Context context) {
-        if (context.getDeviceId() == DEVICE_ID_DEFAULT
-                || !android.companion.virtual.flags.Flags.virtualCamera()) {
+        if (context.getDeviceId() == DEVICE_ID_DEFAULT) {
             return DEVICE_POLICY_DEFAULT;
         }
 
@@ -1375,6 +1382,9 @@ public final class CameraManager {
      * @throws SecurityException if the application does not have permission to
      *                           access the camera
      *
+     * @throws UnsupportedOperationException if {@link #isCameraDeviceSharingSupported} returns
+     *                                       false for the given {@code cameraId}.
+     *
      * @see #getCameraIdList
      * @see android.app.admin.DevicePolicyManager#setCameraDisabled
      *
@@ -1392,6 +1402,10 @@ public final class CameraManager {
             throws CameraAccessException {
         if (executor == null) {
             throw new IllegalArgumentException("executor was null");
+        }
+        if (!isCameraDeviceSharingSupported(cameraId)) {
+            throw new UnsupportedOperationException(
+                    "CameraDevice sharing is not supported for Camera ID: " + cameraId);
         }
         openCameraImpl(cameraId, callback, executor, /*oomScoreOffset*/0,
                 getRotationOverride(mContext), /*sharedMode*/true);
@@ -1678,7 +1692,10 @@ public final class CameraManager {
      */
     public static int getRotationOverride(@Nullable Context context,
             @Nullable PackageManager packageManager, @Nullable String packageName) {
-        if (com.android.window.flags.Flags.enableCameraCompatForDesktopWindowing()) {
+        // Isolated process does not have access to the ContentProvider which
+        // `DesktopModeFlags` uses. `DesktopModeFlags` combines developer options and Aconfig flags.
+        if (!Process.isIsolated() && DesktopModeFlags
+                .ENABLE_CAMERA_COMPAT_SIMULATE_REQUESTED_ORIENTATION.isTrue()) {
             return getRotationOverrideInternal(context, packageManager, packageName);
         } else {
             return shouldOverrideToPortrait(packageManager, packageName)
@@ -1698,14 +1715,16 @@ public final class CameraManager {
             return ICameraService.ROTATION_OVERRIDE_NONE;
         }
 
-        if (context != null) {
+        // Isolated process does not have access to ActivityTaskManager service, which is used
+        // indirectly in `ActivityManager.getAppTasks()`.
+        if (context != null && !Process.isIsolated()) {
             final ActivityManager activityManager = context.getSystemService(ActivityManager.class);
             if (activityManager != null) {
                 for (ActivityManager.AppTask appTask : activityManager.getAppTasks()) {
                     final TaskInfo taskInfo = appTask.getTaskInfo();
                     final int freeformCameraCompatMode = taskInfo.appCompatTaskInfo
                             .cameraCompatTaskInfo.freeformCameraCompatMode;
-                    if (freeformCameraCompatMode != 0
+                    if (isInCameraCompatMode(freeformCameraCompatMode)
                             && taskInfo.topActivity != null
                             && taskInfo.topActivity.getPackageName().equals(packageName)) {
                         // WindowManager has requested rotation override.
@@ -1730,6 +1749,12 @@ public final class CameraManager {
         return CompatChanges.isChangeEnabled(OVERRIDE_CAMERA_LANDSCAPE_TO_PORTRAIT)
                 ? ICameraService.ROTATION_OVERRIDE_OVERRIDE_TO_PORTRAIT
                 : ICameraService.ROTATION_OVERRIDE_NONE;
+    }
+
+    private static boolean isInCameraCompatMode(@CameraCompatTaskInfo.FreeformCameraCompatMode int
+            freeformCameraCompatMode) {
+        return (freeformCameraCompatMode != CameraCompatTaskInfo.CAMERA_COMPAT_FREEFORM_UNSPECIFIED)
+                && (freeformCameraCompatMode != CameraCompatTaskInfo.CAMERA_COMPAT_FREEFORM_NONE);
     }
 
     private static int getRotationOverrideForCompatFreeform(
@@ -2569,11 +2594,6 @@ public final class CameraManager {
 
         private boolean shouldHideCamera(int currentDeviceId, int devicePolicy,
                 DeviceCameraInfo info) {
-            if (!android.companion.virtualdevice.flags.Flags.cameraDeviceAwareness()) {
-                // Don't hide any cameras if the device-awareness feature flag is disabled.
-                return false;
-            }
-
             if (devicePolicy == DEVICE_POLICY_DEFAULT && info.mDeviceId == DEVICE_ID_DEFAULT) {
                 // Don't hide default-device cameras for a default-policy virtual device.
                 return false;
@@ -2814,6 +2834,28 @@ public final class CameraManager {
                     throw new IllegalArgumentException("cameraId was null");
                 }
 
+// QTI_BEGIN: 2018-03-10: Camera: Ignore torch status update for aux or compsite camera
+                /* Force to expose only two cameras
+                 * if the package name does not falls in this bucket
+                 */
+                boolean exposeAuxCamera = false;
+                String packageName = ActivityThread.currentOpPackageName();
+                String packageList = SystemProperties.get("vendor.camera.aux.packagelist");
+                if (packageList.length() > 0) {
+                    TextUtils.StringSplitter splitter = new TextUtils.SimpleStringSplitter(',');
+                    splitter.setString(packageList);
+                    for (String str : splitter) {
+                        if (packageName.equals(str)) {
+                            exposeAuxCamera = true;
+                            break;
+                        }
+                    }
+                }
+                if (exposeAuxCamera == false && (Integer.parseInt(cameraId) >= 2)) {
+                    throw new IllegalArgumentException("invalid cameraId");
+                }
+
+// QTI_END: 2018-03-10: Camera: Ignore torch status update for aux or compsite camera
                 ICameraService cameraService = getCameraService();
                 if (cameraService == null) {
                     throw new CameraAccessException(CameraAccessException.CAMERA_DISCONNECTED,
@@ -3072,6 +3114,34 @@ public final class CameraManager {
         }
 
         private void onStatusChangedLocked(int status, DeviceCameraInfo info) {
+// QTI_BEGIN: 2018-03-10: Camera: Expose Aux camera to apps present in the whitelist
+            /* Force to ignore the last mono/aux camera status update
+             * if the package name does not falls in this bucket
+             */
+            boolean exposeMonoCamera = false;
+            String packageName = ActivityThread.currentOpPackageName();
+            String packageList = SystemProperties.get("vendor.camera.aux.packagelist");
+            if (packageList.length() > 0) {
+                TextUtils.StringSplitter splitter = new TextUtils.SimpleStringSplitter(',');
+                splitter.setString(packageList);
+                for (String str : splitter) {
+                    if (packageName.equals(str)) {
+                        exposeMonoCamera = true;
+                        break;
+                    }
+                }
+            }
+
+            if (exposeMonoCamera == false) {
+// QTI_END: 2018-03-10: Camera: Expose Aux camera to apps present in the whitelist
+                if (Integer.parseInt(info.mCameraId) >= 2) {
+                    Log.w(TAG, "[soar.cts] ignore the status update of camera: " + info.mCameraId);
+// QTI_BEGIN: 2018-03-10: Camera: Expose Aux camera to apps present in the whitelist
+                    return;
+                }
+            }
+
+// QTI_END: 2018-03-10: Camera: Expose Aux camera to apps present in the whitelist
             if (DEBUG) {
                 Log.v(TAG,
                         String.format("Camera id %s has status changed to 0x%x for device %d",
@@ -3232,6 +3302,35 @@ public final class CameraManager {
                         info.mCameraId, status, info.mDeviceId));
             }
 
+// QTI_BEGIN: 2018-03-10: Camera: Ignore torch status update for aux or compsite camera
+            /* Force to ignore the aux or composite camera torch status update
+             * if the package name does not falls in this bucket
+             */
+            boolean exposeMonoCamera = false;
+            String packageName = ActivityThread.currentOpPackageName();
+            String packageList = SystemProperties.get("vendor.camera.aux.packagelist");
+            if (packageList.length() > 0) {
+                TextUtils.StringSplitter splitter = new TextUtils.SimpleStringSplitter(',');
+                splitter.setString(packageList);
+                for (String str : splitter) {
+                    if (packageName.equals(str)) {
+                        exposeMonoCamera = true;
+                        break;
+                    }
+                }
+            }
+
+            if (exposeMonoCamera == false) {
+// QTI_END: 2018-03-10: Camera: Ignore torch status update for aux or compsite camera
+                if (Integer.parseInt(info.mCameraId) >= 2) {
+                    Log.w(TAG, "ignore the torch status update of camera: " + info.mCameraId);
+// QTI_BEGIN: 2018-03-10: Camera: Ignore torch status update for aux or compsite camera
+                    return;
+                }
+            }
+
+
+// QTI_END: 2018-03-10: Camera: Ignore torch status update for aux or compsite camera
             if (!validTorchStatus(status)) {
                 Log.e(TAG, String.format(
                         "Ignoring invalid camera %s torch status 0x%x for device %d",

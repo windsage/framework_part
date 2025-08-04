@@ -207,7 +207,7 @@ BootAnimation::BootAnimation(sp<Callbacks> callbacks)
         : Thread(false), mLooper(new Looper(false)), mClockEnabled(true), mTimeIsAccurate(false),
         mTimeFormat12Hour(false), mTimeCheckThread(nullptr), mCallbacks(callbacks) {
     ATRACE_CALL();
-    mSession = new SurfaceComposerClient();
+    mSession = sp<SurfaceComposerClient>::make();
 
     std::string powerCtl = android::base::GetProperty("sys.powerctl", "");
     if (powerCtl.empty()) {
@@ -282,7 +282,9 @@ static void* decodeImage(const void* encodedData, size_t dataLength, AndroidBitm
     const size_t size = outInfo->stride * outInfo->height;
     void* pixels = malloc(size);
     int result = AImageDecoder_decodeImage(decoder, pixels, outInfo->stride, size);
-    AImageDecoder_delete(decoder);
+    // TODO(b/180130969) Fix ~ImageDecoder() so that AImageDecoder_delete stops
+    // causing a segfault, then add back this call to AImageDecoder_delete().
+    //AImageDecoder_delete(decoder);
 
     if (result != ANDROID_IMAGE_DECODER_SUCCESS) {
         free(pixels);
@@ -441,7 +443,7 @@ public:
             numEvents = mBootAnimation->mDisplayEventReceiver->getEvents(buffer, kBufferSize);
             for (size_t i = 0; i < static_cast<size_t>(numEvents); i++) {
                 const auto& event = buffer[i];
-                if (event.header.type == DisplayEventReceiver::DISPLAY_EVENT_HOTPLUG) {
+                if (event.header.type == DisplayEventType::DISPLAY_EVENT_HOTPLUG) {
                     SLOGV("Hotplug received");
 
                     if (!event.hotplug.connected) {
@@ -716,6 +718,20 @@ bool BootAnimation::findBootAnimationFileInternal(const std::vector<std::string>
 }
 
 void BootAnimation::findBootAnimationFile() {
+
+// QTI_BEGIN: 2020-02-11: Android_UI: BootAnimation: Add bootanimation configuration prop
+    std::string custAnimProp = !mShuttingDown ?
+        android::base::GetProperty("persist.sys.customanim.boot", ""):
+        android::base::GetProperty("persist.sys.customanim.shutdown", "");
+    const char *custAnim = custAnimProp.c_str();
+    ALOGD("Animation customzation path: %s", custAnim);
+    if (access(custAnim, R_OK) == 0) {
+        mZipFileName = custAnim;
+        ALOGD("%sAnimation customzation path: %s", mShuttingDown ? "Shutdown" : "Boot", mZipFileName.c_str());
+        return;
+    }
+
+// QTI_END: 2020-02-11: Android_UI: BootAnimation: Add bootanimation configuration prop
     ATRACE_CALL();
     const bool playDarkAnim = android::base::GetIntProperty("ro.boot.theme", 0) == 1;
     const std::string productBootanimationFile = PRODUCT_BOOTANIMATION_DIR +

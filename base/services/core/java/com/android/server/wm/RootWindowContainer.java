@@ -35,8 +35,8 @@ import static android.view.WindowManager.TRANSIT_FLAG_KEYGUARD_OCCLUDING;
 import static android.view.WindowManager.TRANSIT_NONE;
 import static android.view.WindowManager.TRANSIT_PIP;
 import static android.view.WindowManager.TRANSIT_SLEEP;
-import static android.view.WindowManager.TRANSIT_TO_BACK;
 import static android.view.WindowManager.TRANSIT_WAKE;
+import static android.window.DesktopExperienceFlags.ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT;
 
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_FOCUS_LIGHT;
 import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_KEEP_SCREEN_ON;
@@ -49,6 +49,7 @@ import static com.android.internal.protolog.WmProtoLogGroups.WM_SHOW_SURFACE_ALL
 import static com.android.server.policy.PhoneWindowManager.SYSTEM_DIALOG_REASON_ASSIST;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_LAYOUT;
 import static com.android.server.policy.WindowManagerPolicy.FINISH_LAYOUT_REDO_WALLPAPER;
+import static com.android.server.wm.ActivityRecord.State.DESTROYED;
 import static com.android.server.wm.ActivityRecord.State.FINISHING;
 import static com.android.server.wm.ActivityRecord.State.PAUSED;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
@@ -67,7 +68,6 @@ import static com.android.server.wm.ActivityTaskSupervisor.DEFER_RESUME;
 import static com.android.server.wm.ActivityTaskSupervisor.ON_TOP;
 import static com.android.server.wm.ActivityTaskSupervisor.dumpHistoryList;
 import static com.android.server.wm.ActivityTaskSupervisor.printThisActivity;
-import static com.android.server.wm.KeyguardController.KEYGUARD_SLEEP_TOKEN_TAG;
 import static com.android.server.wm.RootWindowContainerProto.IS_HOME_RECENTS_COMPONENT;
 import static com.android.server.wm.RootWindowContainerProto.KEYGUARD_CONTROLLER;
 import static com.android.server.wm.RootWindowContainerProto.WINDOW_CONTAINER;
@@ -77,13 +77,9 @@ import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_LAYOUT_REPEAT
 import static com.android.server.wm.WindowManagerDebugConfig.DEBUG_WINDOW_TRACE;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
-import static com.android.server.wm.WindowManagerService.H.WINDOW_FREEZE_TIMEOUT;
 import static com.android.server.wm.WindowManagerService.UPDATE_FOCUS_NORMAL;
 import static com.android.server.wm.WindowManagerService.UPDATE_FOCUS_PLACING_SURFACES;
 import static com.android.server.wm.WindowManagerService.UPDATE_FOCUS_WILL_PLACE_SURFACES;
-import static com.android.server.wm.WindowManagerService.WINDOWS_FREEZING_SCREENS_NONE;
-import static com.android.server.wm.WindowSurfacePlacer.SET_UPDATE_ROTATION;
-import static com.android.server.wm.WindowSurfacePlacer.SET_WALLPAPER_ACTION_PENDING;
 
 import static java.lang.Integer.MAX_VALUE;
 
@@ -128,6 +124,9 @@ import android.provider.Settings;
 import android.service.voice.IVoiceInteractionSession;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+import android.util.BoostFramework;
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
 import android.util.IntArray;
 import android.util.Pair;
 import android.util.Slog;
@@ -139,6 +138,7 @@ import android.view.Display;
 import android.view.DisplayInfo;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
+import android.window.DesktopModeFlags;
 import android.window.TaskFragmentAnimationParams;
 import android.window.WindowContainerToken;
 
@@ -155,7 +155,11 @@ import com.android.server.pm.UserManagerInternal;
 import com.android.server.policy.PermissionPolicyInternal;
 import com.android.server.policy.WindowManagerPolicy;
 import com.android.server.utils.Slogf;
+// QTI_BEGIN: 2024-05-22: Performance: framework_base: Add process freezer to improve app launch latency
+import com.android.server.am.ProcessFreezerManager;
+// QTI_END: 2024-05-22: Performance: framework_base: Add process freezer to improve app launch latency
 import com.android.server.wm.utils.RegionUtils;
+import com.android.window.flags.Flags;
 
 import java.io.FileDescriptor;
 import java.io.PrintWriter;
@@ -170,7 +174,7 @@ import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /** Root {@link WindowContainer} for the device. */
-class RootWindowContainer extends WindowContainer<DisplayContent>
+public class RootWindowContainer extends WindowContainer<DisplayContent>
         implements DisplayManager.DisplayListener {
     private static final String TAG = TAG_WITH_CLASS_NAME ? "RootWindowContainer" : TAG_WM;
 
@@ -197,13 +201,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
 
     private boolean mSustainedPerformanceModeEnabled = false;
     private boolean mSustainedPerformanceModeCurrent = false;
-
-    // During an orientation change, we track whether all windows have rendered
-    // at the new orientation, and this will be false from changing orientation until that occurs.
-    // For seamless rotation cases this always stays true, as the windows complete their orientation
-    // changes 1 by 1 without disturbing global state.
-    boolean mOrientationChangeComplete = true;
-    boolean mWallpaperActionPending = false;
 
     private final Handler mHandler;
 
@@ -252,6 +249,14 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
     @NonNull
     private final DisplayRotationCoordinator mDisplayRotationCoordinator;
 
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+    public static boolean mPerfSendTapHint = false;
+    public static boolean mIsPerfBoostAcquired = false;
+    public static int mPerfHandle = -1;
+    public BoostFramework mPerfBoost = null;
+    public BoostFramework mUxPerf = null;
+
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
     /** Reference to default display so we can quickly look it up. */
     private DisplayContent mDefaultDisplay;
     private final SparseArray<IntArray> mDisplayAccessUIDs = new SparseArray<>();
@@ -262,6 +267,7 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
     int mCurrentUser;
     /** Root task id of the front root task when user switched, indexed by userId. */
     SparseIntArray mUserRootTaskInFront = new SparseIntArray(2);
+    SparseArray<IntArray> mUserVisibleRootTasks = new SparseArray<>();
 
     /**
      * A list of tokens that cause the top activity to be put to sleep.
@@ -662,9 +668,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         final int count = mChildren.size();
         for (int i = 0; i < count; ++i) {
             final int pendingChanges = mChildren.get(i).pendingLayoutChanges;
-            if ((pendingChanges & FINISH_LAYOUT_REDO_WALLPAPER) != 0) {
-                animator.mBulkUpdateParams |= SET_WALLPAPER_ACTION_PENDING;
-            }
             if (pendingChanges != 0) {
                 hasChanges = true;
             }
@@ -808,8 +811,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         mWmService.mAtmService.mTaskFragmentOrganizerController.dispatchPendingEvents();
         mWmService.mSyncEngine.onSurfacePlacement();
 
-        checkAppTransitionReady(surfacePlacer);
-
         mWmService.mAtmService.mBackNavigationController
                 .checkAnimationReady(defaultDisplay.mWallpaperController);
 
@@ -839,20 +840,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
             }
         }
 
-        if (mWmService.mDisplayFrozen) {
-            ProtoLog.v(WM_DEBUG_ORIENTATION,
-                    "With display frozen, orientationChangeComplete=%b",
-                    mOrientationChangeComplete);
-        }
-        if (mOrientationChangeComplete) {
-            if (mWmService.mWindowsFreezingScreen != WINDOWS_FREEZING_SCREENS_NONE) {
-                mWmService.mWindowsFreezingScreen = WINDOWS_FREEZING_SCREENS_NONE;
-                mWmService.mLastFinishedFreezeSource = mLastWindowFreezeSource;
-                mWmService.mH.removeMessages(WINDOW_FREEZE_TIMEOUT);
-            }
-            mWmService.stopFreezingDisplayLocked();
-        }
-
         // Destroy the surface of any windows that are no longer visible.
         i = mWmService.mDestroySurface.size();
         if (i > 0) {
@@ -879,13 +866,12 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
             }
         }
 
-        if (!mWmService.mDisplayFrozen) {
-            // Post these on a handler such that we don't call into power manager service while
-            // holding the window manager lock to avoid lock contention with power manager lock.
-            mHandler.obtainMessage(SET_SCREEN_BRIGHTNESS_OVERRIDE, mDisplayBrightnessOverrides)
-                    .sendToTarget();
-            mHandler.obtainMessage(SET_USER_ACTIVITY_TIMEOUT, mUserActivityTimeout).sendToTarget();
-        }
+        // Post these on a handler such that we don't call into power manager service while
+        // holding the window manager lock to avoid lock contention with power manager lock.
+        // Send a copy of the brightness overrides as they may be cleared before being sent out.
+        mHandler.obtainMessage(SET_SCREEN_BRIGHTNESS_OVERRIDE, mDisplayBrightnessOverrides.clone())
+                .sendToTarget();
+        mHandler.obtainMessage(SET_USER_ACTIVITY_TIMEOUT, mUserActivityTimeout).sendToTarget();
 
         if (mSustainedPerformanceModeCurrent != mSustainedPerformanceModeEnabled) {
             mSustainedPerformanceModeEnabled = mSustainedPerformanceModeCurrent;
@@ -900,8 +886,7 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         }
 
         if (!mWmService.mWaitingForDrawnCallbacks.isEmpty()
-                || (mOrientationChangeComplete && !isLayoutNeeded()
-                && !mUpdateRotation)) {
+                || (!isLayoutNeeded() && !mUpdateRotation)) {
             mWmService.checkDrawnWindowsLocked();
         }
 
@@ -918,38 +903,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         mWmService.scheduleAnimationLocked();
 
         if (DEBUG_WINDOW_TRACE) Slog.e(TAG, "performSurfacePlacementInner exit");
-    }
-
-    private void checkAppTransitionReady(WindowSurfacePlacer surfacePlacer) {
-        // Trace all displays app transition by Z-order for pending layout change.
-        for (int i = mChildren.size() - 1; i >= 0; --i) {
-            final DisplayContent curDisplay = mChildren.get(i);
-
-            // If we are ready to perform an app transition, check through all of the app tokens
-            // to be shown and see if they are ready to go.
-            if (curDisplay.mAppTransition.isReady()) {
-                // handleAppTransitionReady may modify curDisplay.pendingLayoutChanges.
-                curDisplay.mAppTransitionController.handleAppTransitionReady();
-                if (DEBUG_LAYOUT_REPEATS) {
-                    surfacePlacer.debugLayoutRepeats("after handleAppTransitionReady",
-                            curDisplay.pendingLayoutChanges);
-                }
-            }
-
-            if (curDisplay.mAppTransition.isRunning() && !curDisplay.isAppTransitioning()) {
-                // We have finished the animation of an app transition. To do this, we have
-                // delayed a lot of operations like showing and hiding apps, moving apps in
-                // Z-order, etc.
-                // The app token list reflects the correct Z-order, but the window list may now
-                // be out of sync with it. So here we will just rebuild the entire app window
-                // list. Fun!
-                curDisplay.handleAnimatingStoppedAndTransition();
-                if (DEBUG_LAYOUT_REPEATS) {
-                    surfacePlacer.debugLayoutRepeats("after handleAnimStopAndXitionLock",
-                            curDisplay.pendingLayoutChanges);
-                }
-            }
-        }
     }
 
     private void applySurfaceChangesTransaction() {
@@ -989,7 +942,7 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
     private void handleResizingWindows() {
         for (int i = mWmService.mResizingWindows.size() - 1; i >= 0; i--) {
             WindowState win = mWmService.mResizingWindows.get(i);
-            if (win.mAppFreezing || win.getDisplayContent().mWaitingForConfig) {
+            if (win.getDisplayContent().mWaitingForConfig) {
                 // Don't remove this window until rotation has completed and is not waiting for the
                 // complete configuration.
                 continue;
@@ -1080,28 +1033,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
             }
         }
         return changed;
-    }
-
-    boolean copyAnimToLayoutParams() {
-        boolean doRequest = false;
-
-        final int bulkUpdateParams = mWmService.mAnimator.mBulkUpdateParams;
-        if ((bulkUpdateParams & SET_UPDATE_ROTATION) != 0) {
-            mUpdateRotation = true;
-            doRequest = true;
-        }
-        if (mOrientationChangeComplete) {
-            mLastWindowFreezeSource = mWmService.mAnimator.mLastWindowFreezeSource;
-            if (mWmService.mWindowsFreezingScreen != WINDOWS_FREEZING_SCREENS_NONE) {
-                doRequest = true;
-            }
-        }
-
-        if ((bulkUpdateParams & SET_WALLPAPER_ACTION_PENDING) != 0) {
-            mWallpaperActionPending = true;
-        }
-
-        return doRequest;
     }
 
     private final class MyHandler extends Handler {
@@ -1436,6 +1367,14 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
                     : getDefaultTaskDisplayArea();
         }
 
+        // When display content mode management flag is enabled, the task display area is marked as
+        // removed when switching from extended display to mirroring display. We need to restart the
+        // task display area before starting the home.
+        if (ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT.isTrue()
+                && taskDisplayArea.shouldKeepNoTask()) {
+            taskDisplayArea.setShouldKeepNoTask(false);
+        }
+
         Intent homeIntent = null;
         ActivityInfo aInfo = null;
         if (taskDisplayArea == getDefaultTaskDisplayArea()
@@ -1530,20 +1469,18 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         ActivityInfo aInfo = resolveHomeActivity(userId, homeIntent);
         boolean lookForSecondaryHomeActivityInPrimaryHomePackage = aInfo != null;
 
-        if (android.companion.virtual.flags.Flags.vdmCustomHome()) {
-            // Resolve the externally set home activity for this display, if any. If it is unset or
-            // we fail to resolve it, fallback to the default secondary home activity.
-            final ComponentName customHomeComponent =
-                    taskDisplayArea.getDisplayContent() != null
-                            ? taskDisplayArea.getDisplayContent().getCustomHomeComponent()
-                            : null;
-            if (customHomeComponent != null) {
-                homeIntent.setComponent(customHomeComponent);
-                ActivityInfo customHomeActivityInfo = resolveHomeActivity(userId, homeIntent);
-                if (customHomeActivityInfo != null) {
-                    aInfo = customHomeActivityInfo;
-                    lookForSecondaryHomeActivityInPrimaryHomePackage = false;
-                }
+        // Resolve the externally set home activity for this display, if any. If it is unset or
+        // we fail to resolve it, fallback to the default secondary home activity.
+        final ComponentName customHomeComponent =
+                taskDisplayArea.getDisplayContent() != null
+                        ? taskDisplayArea.getDisplayContent().getCustomHomeComponent()
+                        : null;
+        if (customHomeComponent != null) {
+            homeIntent.setComponent(customHomeComponent);
+            ActivityInfo customHomeActivityInfo = resolveHomeActivity(userId, homeIntent);
+            if (customHomeActivityInfo != null) {
+                aInfo = customHomeActivityInfo;
+                lookForSecondaryHomeActivityInPrimaryHomePackage = false;
             }
         }
 
@@ -1762,7 +1699,7 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         // Force-update the orientation from the WindowManager, since we need the true configuration
         // to send to the client now.
         final Configuration config =
-                displayContent.updateOrientation(starting, true /* forceUpdate */);
+                displayContent.updateOrientationAndComputeConfig(true /* forceUpdate */);
         // Visibilities may change so let the starting activity have a chance to report. Can't do it
         // when visibility is changed in each AppWindowToken because it may trigger wrong
         // configuration push because the visibility of some activities may not be updated yet.
@@ -1794,14 +1731,14 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
                     activityAssistInfos.clear();
                     activityAssistInfos.add(new ActivityAssistInfo(top));
                     // Check if the activity on the split screen.
-                    final Task adjacentTask = top.getTask().getAdjacentTask();
-                    if (adjacentTask != null) {
+                    top.getTask().forOtherAdjacentTasks(task -> {
                         final ActivityRecord adjacentActivityRecord =
-                                adjacentTask.getTopNonFinishingActivity();
+                                task.getTopNonFinishingActivity();
                         if (adjacentActivityRecord != null) {
-                            activityAssistInfos.add(new ActivityAssistInfo(adjacentActivityRecord));
+                            activityAssistInfos.add(
+                                    new ActivityAssistInfo(adjacentActivityRecord));
                         }
-                    }
+                    });
                     if (rootTask == topFocusedRootTask) {
                         topVisibleActivities.addAll(0, activityAssistInfos);
                     } else {
@@ -1814,7 +1751,7 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
     }
 
     @Nullable
-    Task getTopDisplayFocusedRootTask() {
+    public Task getTopDisplayFocusedRootTask() {
         for (int i = getChildCount() - 1; i >= 0; --i) {
             final Task focusedRootTask = getChildAt(i).getFocusedRootTask();
             if (focusedRootTask != null) {
@@ -1924,7 +1861,19 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         // appropriate.
         removeRootTasksInWindowingModes(WINDOWING_MODE_PINNED);
 
-        mUserRootTaskInFront.put(mCurrentUser, focusRootTaskId);
+        if (DesktopModeFlags.ENABLE_TOP_VISIBLE_ROOT_TASK_PER_USER_TRACKING.isTrue()) {
+            final IntArray visibleRootTasks = new IntArray();
+            forAllRootTasks(rootTask -> {
+                if ((mCurrentUser == rootTask.mUserId || rootTask.showForAllUsers())
+                        && rootTask.isVisible()) {
+                    visibleRootTasks.add(rootTask.getRootTaskId());
+                }
+            }, /* traverseTopToBottom */ false);
+            mUserVisibleRootTasks.put(mCurrentUser, visibleRootTasks);
+        } else {
+            mUserRootTaskInFront.put(mCurrentUser, focusRootTaskId);
+        }
+
         mCurrentUser = userId;
 
         mTaskSupervisor.mStartingUsers.add(uss);
@@ -1937,22 +1886,57 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
             Slog.i(TAG, "Persisting top task because it belongs to an always-visible user");
             // For a normal user-switch, we will restore the new user's task. But if the pre-switch
             // top task is an always-visible (Communal) one, keep it even after the switch.
-            mUserRootTaskInFront.put(mCurrentUser, focusRootTaskId);
+            if (Flags.enableTopVisibleRootTaskPerUserTracking()) {
+                final IntArray rootTasks = mUserVisibleRootTasks.get(mCurrentUser);
+                rootTasks.add(focusRootTaskId);
+                mUserVisibleRootTasks.put(mCurrentUser, rootTasks);
+            } else {
+                mUserRootTaskInFront.put(mCurrentUser, focusRootTaskId);
+            }
+
         }
 
         final int restoreRootTaskId = mUserRootTaskInFront.get(userId);
+        final IntArray rootTaskIdsToRestore = mUserVisibleRootTasks.get(userId);
+        boolean homeInFront = false;
+        if (Flags.enableTopVisibleRootTaskPerUserTracking()) {
+            if (rootTaskIdsToRestore == null || rootTaskIdsToRestore.size() == 0) {
+                // If there are no root tasks saved, try restore id 0 which should create and launch
+                // the home task.
+                handleRootTaskLaunchOnUserSwitch(/* restoreRootTaskId */INVALID_TASK_ID);
+                homeInFront = true;
+            } else {
+                for (int i = 0; i < rootTaskIdsToRestore.size(); i++) {
+                    handleRootTaskLaunchOnUserSwitch(rootTaskIdsToRestore.get(i));
+                }
+                // Check if the top task is type home
+                final int topRootTaskId = rootTaskIdsToRestore.get(rootTaskIdsToRestore.size() - 1);
+                homeInFront = isHomeTask(topRootTaskId);
+            }
+        } else {
+            handleRootTaskLaunchOnUserSwitch(restoreRootTaskId);
+            // Check if the top task is type home
+            homeInFront = isHomeTask(restoreRootTaskId);
+        }
+        return homeInFront;
+    }
+
+    private boolean isHomeTask(int taskId) {
+        final Task rootTask = getRootTask(taskId);
+        return rootTask != null && rootTask.isActivityTypeHome();
+    }
+
+    private void handleRootTaskLaunchOnUserSwitch(int restoreRootTaskId) {
         Task rootTask = getRootTask(restoreRootTaskId);
         if (rootTask == null) {
             rootTask = getDefaultTaskDisplayArea().getOrCreateRootHomeTask();
         }
-        final boolean homeInFront = rootTask.isActivityTypeHome();
         if (rootTask.isOnHomeDisplay()) {
             rootTask.moveToFront("switchUserOnHomeDisplay");
         } else {
             // Root task was moved to another display while user was swapped out.
             resumeHomeActivity(null, "switchUserOnOtherDisplay", getDefaultTaskDisplayArea());
         }
-        return homeInFront;
     }
 
     /** Returns whether the given user is to be always-visible (e.g. a communal profile). */
@@ -1963,7 +1947,11 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
     }
 
     void removeUser(int userId) {
-        mUserRootTaskInFront.delete(userId);
+        if (Flags.enableTopVisibleRootTaskPerUserTracking()) {
+            mUserVisibleRootTasks.delete(userId);
+        } else {
+            mUserRootTaskInFront.delete(userId);
+        }
     }
 
     /**
@@ -1976,7 +1964,18 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
                 rootTask = getDefaultTaskDisplayArea().getOrCreateRootHomeTask();
             }
 
-            mUserRootTaskInFront.put(userId, rootTask.getRootTaskId());
+            if (Flags.enableTopVisibleRootTaskPerUserTracking()) {
+                final IntArray rootTasks = mUserVisibleRootTasks.get(userId, new IntArray());
+                // If root task already exists in the list, move it to the top instead.
+                final int rootTaskIndex = rootTasks.indexOf(rootTask.getRootTaskId());
+                if (rootTaskIndex != -1) {
+                    rootTasks.remove(rootTaskIndex);
+                }
+                rootTasks.add(rootTask.getRootTaskId());
+                mUserVisibleRootTasks.put(userId, rootTasks);
+            } else {
+                mUserRootTaskInFront.put(userId, rootTask.getRootTaskId());
+            }
         }
     }
 
@@ -2092,10 +2091,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
                 removeRootTasksInWindowingModes(WINDOWING_MODE_PINNED);
             }
 
-            // Set a transition to ensure that we don't immediately try and update the visibility
-            // of the activity entering PIP
-            r.getDisplayContent().prepareAppTransition(TRANSIT_NONE);
-
             transitionController.collect(task);
 
             // Defer the windowing mode change until after the transition to prevent the activity
@@ -2124,7 +2119,7 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
                     if (!tf.isOrganizedTaskFragment()) {
                         return;
                     }
-                    tf.resetAdjacentTaskFragment();
+                    tf.clearAdjacentTaskFragments();
                     tf.setCompanionTaskFragment(null /* companionTaskFragment */);
                     tf.setAnimationParams(TaskFragmentAnimationParams.DEFAULT);
                     if (tf.getTopNonFinishingActivity() != null) {
@@ -2219,20 +2214,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
 
                 // Ensure the leash of new task is in sync with its current bounds after reparent.
                 rootTask.maybeApplyLastRecentsAnimationTransaction();
-
-                // In the case of this activity entering PIP due to it being moved to the back,
-                // the old activity would have a TRANSIT_TASK_TO_BACK transition that needs to be
-                // ran. But, since its visibility did not change (note how it was STOPPED/not
-                // visible, and with it now at the back stack, it remains not visible), the logic to
-                // add the transition is automatically skipped. We then add this activity manually
-                // to the list of apps being closed, and request its transition to be ran.
-                final ActivityRecord oldTopActivity = task.getTopMostActivity();
-                if (oldTopActivity != null && oldTopActivity.isState(STOPPED)
-                        && task.getDisplayContent().mAppTransition.containsTransitRequest(
-                        TRANSIT_TO_BACK)) {
-                    task.getDisplayContent().mClosingApps.add(oldTopActivity);
-                    oldTopActivity.mRequestForceTransition = true;
-                }
             }
 
             // TODO(remove-legacy-transit): Move this to the `singleActivity` case when removing
@@ -2388,16 +2369,122 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         }
     }
 
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+    void acquireAppLaunchPerfLock(ActivityRecord r) {
+        /* Acquire perf lock during new app launch */
+        if (mPerfBoost == null) {
+            mPerfBoost = new BoostFramework();
+        }
+        if (mPerfBoost != null) {
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+// QTI_BEGIN: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+            int pkgType = mPerfBoost.perfGetFeedback(BoostFramework.VENDOR_FEEDBACK_WORKLOAD_TYPE,
+                                                     r.packageName);
+            int wpcPid = -1;
+            if (mService != null && r != null && r.info != null && r.info.applicationInfo !=null) {
+// QTI_END: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                final WindowProcessController wpc =
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+// QTI_BEGIN: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+                        mService.getProcessController(r.processName, r.info.applicationInfo.uid);
+// QTI_END: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                if (wpc != null && wpc.hasThread()) {
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+// QTI_BEGIN: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+                   //If target process didn't start yet,
+                   // this operation will be done when app call attach
+                   wpcPid = wpc.getPid();
+                }
+            }
+            if (mPerfBoost.getPerfHalVersion() >= BoostFramework.PERF_HAL_V23) {
+                mPerfBoost.perfHintAcqRel(-1, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                    r.packageName, -1, BoostFramework.Launch.BOOST_V1, 2, pkgType, wpcPid);
+                mPerfSendTapHint = true;
+                mPerfBoost.perfHintAcqRel(-1, BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                    r.packageName, -1, BoostFramework.Launch.BOOST_V2, 2, pkgType, wpcPid);
+                if (wpcPid != -1) {
+                    mPerfBoost.perfHintAcqRel(-1,
+                        BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                            r.packageName, wpcPid,
+                            BoostFramework.Launch.TYPE_ATTACH_APPLICATION, 2, pkgType, wpcPid);
+                }
+
+                if (pkgType  == BoostFramework.WorkloadType.GAME)
+                {
+                    mPerfHandle = mPerfBoost.perfHintAcqRel(-1,
+                        BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                           r.packageName, -1, BoostFramework.Launch.BOOST_GAME, 2, pkgType, wpcPid);
+                } else {
+                    mPerfHandle = mPerfBoost.perfHintAcqRel(-1,
+                        BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                            r.packageName, -1, BoostFramework.Launch.BOOST_V3, 2, pkgType, wpcPid);
+                }
+            } else {
+                mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST, r.packageName,
+                                    -1, BoostFramework.Launch.BOOST_V1);
+                mPerfSendTapHint = true;
+                mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                    r.packageName, -1, BoostFramework.Launch.BOOST_V2);
+                if (wpcPid != -1) {
+// QTI_END: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                    mPerfBoost.perfHint(
+                        BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+// QTI_BEGIN: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+                            r.packageName, wpcPid,
+// QTI_END: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                            BoostFramework.Launch.TYPE_ATTACH_APPLICATION);
+                }
+
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+// QTI_BEGIN: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+                if (pkgType  == BoostFramework.WorkloadType.GAME)
+                {
+                    mPerfHandle = mPerfBoost.perfHint(
+                        BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                            r.packageName, -1, BoostFramework.Launch.BOOST_GAME);
+                } else {
+                    mPerfHandle = mPerfBoost.perfHint(
+                        BoostFramework.VENDOR_HINT_FIRST_LAUNCH_BOOST,
+                            r.packageName, -1, BoostFramework.Launch.BOOST_V3);
+                }
+// QTI_END: 2022-01-18: Performance: Perf: Added support for app type in launch hint
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+            }
+            if (mPerfHandle > 0)
+                mIsPerfBoostAcquired = true;
+            // Start IOP
+            if(r.info.applicationInfo != null &&
+                r.info.applicationInfo.sourceDir != null) {
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                  if (mPerfBoost.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                    mPerfBoost.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                      mPerfBoost.perfIOPrefetchStart(-1,r.packageName,
+                      r.info.applicationInfo.sourceDir.substring(
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                        0, r.info.applicationInfo.sourceDir.lastIndexOf('/')));
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                  }
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+            }
+        }
+    }
+
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
     @Nullable
     ActivityRecord findTask(ActivityRecord r, TaskDisplayArea preferredTaskDisplayArea,
             boolean includeLaunchedFromBubble) {
         return findTask(r.getActivityType(), r.taskAffinity, r.intent, r.info,
-                preferredTaskDisplayArea, includeLaunchedFromBubble);
+                preferredTaskDisplayArea, includeLaunchedFromBubble, r);
     }
 
     @Nullable
     ActivityRecord findTask(int activityType, String taskAffinity, Intent intent, ActivityInfo info,
-            TaskDisplayArea preferredTaskDisplayArea, boolean includeLaunchedFromBubble) {
+            TaskDisplayArea preferredTaskDisplayArea, boolean includeLaunchedFromBubble, ActivityRecord r) {
         ProtoLog.d(WM_DEBUG_TASKS, "Looking for task of type=%s, taskAffinity=%s, intent=%s"
                         + ", info=%s, preferredTDA=%s, includeLaunchedFromBubble=%b", activityType,
                 taskAffinity, intent, info, preferredTaskDisplayArea, includeLaunchedFromBubble);
@@ -2409,12 +2496,65 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         if (preferredTaskDisplayArea != null) {
             mTmpFindTaskResult.process(preferredTaskDisplayArea);
             if (mTmpFindTaskResult.mIdealRecord != null) {
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                if(mTmpFindTaskResult.mIdealRecord.getState() == DESTROYED) {
+                    /*It's a new app launch */
+                    acquireAppLaunchPerfLock(r);
+                }
+
+                if(mTmpFindTaskResult.mIdealRecord.getState() == STOPPED) {
+                     /*Warm launch */
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                     mUxPerf = new BoostFramework();
+                     if (mUxPerf != null) {
+                         if (mUxPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                             mUxPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                             mUxPerf.perfUXEngine_events(BoostFramework.UXE_EVENT_SUB_LAUNCH, 0, r.packageName, 0);
+                         } else {
+                             mUxPerf.perfEvent(BoostFramework.VENDOR_HINT_WARM_LAUNCH, r.packageName, 2, 0, 0);
+                         }
+                     }
+// QTI_BEGIN: 2025-01-02: Performance: app freezer: Uncomment app freezer by Google
+                    ProcessFreezerManager freezer = ProcessFreezerManager.getInstance();
+                    if (freezer != null && freezer.useFreezerManager()) {
+                        freezer.startFreeze(r.packageName, ProcessFreezerManager.WARM_LAUNCH_FREEZE);
+                    }
+// QTI_END: 2025-01-02: Performance: app freezer: Uncomment app freezer by Google
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+                }
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
                 return mTmpFindTaskResult.mIdealRecord;
             } else if (mTmpFindTaskResult.mCandidateRecord != null) {
                 candidateActivity = mTmpFindTaskResult.mCandidateRecord;
             }
         }
 
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+        /* Acquire perf lock *only* during new app launch */
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+// QTI_BEGIN: 2021-10-08: Core: Revert "Perf:fix issue that launch boost worked abnormal"
+        if ((mTmpFindTaskResult.mIdealRecord == null) ||
+            (mTmpFindTaskResult.mIdealRecord.getState() == DESTROYED)) {
+// QTI_END: 2021-10-08: Core: Revert "Perf:fix issue that launch boost worked abnormal"
+// QTI_BEGIN: 2023-06-28: Performance: Perf:Fix the issue that activity boost duration abnormal.
+            if (r != null && r.isMainIntent(r.intent)) {
+                acquireAppLaunchPerfLock(r);
+// QTI_END: 2023-06-28: Performance: Perf:Fix the issue that activity boost duration abnormal.
+// QTI_BEGIN: 2025-01-02: Performance: app freezer: Uncomment app freezer by Google
+                ProcessFreezerManager freezer = ProcessFreezerManager.getInstance();
+                if (freezer != null && freezer.useFreezerManager()) {
+                    freezer.startFreeze(r.packageName, ProcessFreezerManager.FIRST_LAUNCH_FREEZE);
+                }
+// QTI_END: 2025-01-02: Performance: app freezer: Uncomment app freezer by Google
+// QTI_BEGIN: 2023-06-28: Performance: Perf:Fix the issue that activity boost duration abnormal.
+            } else if (r == null) {
+                Slog.w(TAG, "Should not happen! Didn't apply launch boost");
+            }
+// QTI_END: 2023-06-28: Performance: Perf:Fix the issue that activity boost duration abnormal.
+// QTI_BEGIN: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
+        }
+
+// QTI_END: 2021-04-19: Performance: perf: Move app-launch & uxperf boosts
         final ActivityRecord idealMatchActivity = getItemFromTaskDisplayAreas(taskDisplayArea -> {
             if (taskDisplayArea == preferredTaskDisplayArea) {
                 return null;
@@ -2777,21 +2917,38 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
             if (display == null) {
                 return;
             }
-            // Do not start home before booting, or it may accidentally finish booting before it
-            // starts. Instead, we expect home activities to be launched when the system is ready
-            // (ActivityManagerService#systemReady).
-            if (mService.isBooted() || mService.isBooting()) {
-                startSystemDecorations(display);
+
+            if (ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT.isTrue()) {
+                if (display.allowContentModeSwitch()) {
+                    mWindowManager.mDisplayWindowSettings
+                            .setShouldShowSystemDecorsInternalLocked(display,
+                                    display.mDisplay.canHostTasks());
+                }
+
+                final boolean inTopology = mWindowManager.mDisplayWindowSettings
+                        .shouldShowSystemDecorsLocked(display);
+                mWmService.mDisplayManagerInternal.onDisplayBelongToTopologyChanged(displayId,
+                        inTopology);
             }
+
+            startSystemDecorations(display, "displayAdded");
+
             // Drop any cached DisplayInfos associated with this display id - the values are now
             // out of date given this display added event.
             mWmService.mPossibleDisplayInfoMapper.removePossibleDisplayInfos(displayId);
         }
     }
 
-    private void startSystemDecorations(final DisplayContent displayContent) {
-        startHomeOnDisplay(mCurrentUser, "displayAdded", displayContent.getDisplayId());
-        displayContent.getDisplayPolicy().notifyDisplayReady();
+    void startSystemDecorations(final DisplayContent displayContent, String reason) {
+        // Do not start home before booting, or it may accidentally finish booting before it
+        // starts. Instead, we expect home activities to be launched when the system is ready
+        // (ActivityManagerService#systemReady).
+        if (!mService.isBooted() && !mService.isBooting()) {
+            return;
+        }
+
+        startHomeOnDisplay(mCurrentUser, reason, displayContent.getDisplayId());
+        displayContent.getDisplayPolicy().notifyDisplayAddSystemDecorations();
     }
 
     @Override
@@ -2817,7 +2974,13 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         synchronized (mService.mGlobalLock) {
             final DisplayContent displayContent = getDisplayContent(displayId);
             if (displayContent != null) {
-                displayContent.requestDisplayUpdate(() -> clearDisplayInfoCaches(displayId));
+                displayContent.requestDisplayUpdate(
+                        () -> {
+                            clearDisplayInfoCaches(displayId);
+                            if (ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT.isTrue()) {
+                                displayContent.onDisplayInfoChangeApplied();
+                            }
+                        });
             } else {
                 clearDisplayInfoCaches(displayId);
             }
@@ -2853,7 +3016,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
     }
 
     void prepareForShutdown() {
-        mWindowManager.mSnapshotController.mTaskSnapshotController.prepareShutdown();
         for (int i = 0; i < getChildCount(); i++) {
             createSleepToken("shutdown", getChildAt(i).mDisplayId);
         }
@@ -2896,20 +3058,6 @@ class RootWindowContainer extends WindowContainer<DisplayContent>
         display.mAllSleepTokens.remove(token);
         if (display.mAllSleepTokens.isEmpty()) {
             mService.updateSleepIfNeededLocked();
-            // Assuming no lock screen is set and a user launches an activity, turns off the screen
-            // and turn on the screen again, then the launched activity should be displayed on the
-            // screen without app transition animation. When the screen turns on, both keyguard
-            // sleep token and display off sleep token are removed, but the order is
-            // non-deterministic.
-            // Note: Display#mSkipAppTransitionAnimation will be ignored when keyguard related
-            // transition exists, so this affects only when no lock screen is set. Otherwise
-            // keyguard going away animation will be played.
-            // See also AppTransitionController#getTransitCompatType for more details.
-            if ((!mTaskSupervisor.getKeyguardController().isKeyguardOccluded(display.mDisplayId)
-                    && token.mTag.equals(KEYGUARD_SLEEP_TOKEN_TAG))
-                    || token.mTag.equals(DISPLAY_OFF_SLEEP_TOKEN_TAG)) {
-                display.mSkipAppTransitionAnimation = true;
-            }
         }
     }
 

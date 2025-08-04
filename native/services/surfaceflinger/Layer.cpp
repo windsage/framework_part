@@ -14,6 +14,18 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check for unknown dataspace
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// QTI_END: 2024-02-28: Display: sf: Add check for unknown dataspace
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 
 #pragma clang diagnostic push
@@ -64,12 +76,15 @@
 
 #include "DisplayDevice.h"
 #include "DisplayHardware/HWComposer.h"
-#include "FrameTimeline.h"
+#include "FrameTimeline/FrameTimeline.h"
 #include "FrameTracer/FrameTracer.h"
 #include "FrontEnd/LayerCreationArgs.h"
 #include "FrontEnd/LayerHandle.h"
 #include "Layer.h"
 #include "LayerProtoHelper.h"
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+#include "QtiExtension/QtiSurfaceFlingerExtensionIntf.h"
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 #include "SurfaceFlinger.h"
 #include "TimeStats/TimeStats.h"
 #include "TransactionCallbackInvoker.h"
@@ -118,6 +133,12 @@ TimeStats::SetFrameRateVote frameRateToSetFrameRateVotePayload(Layer::FrameRate 
 
 } // namespace
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+namespace surfaceflingerextension {
+class QtiSurfaceFlingerExtensionIntf;
+} // namespace surfaceflingerextension
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 using namespace ftl::flag_operators;
 
 using base::StringAppendF;
@@ -162,8 +183,9 @@ Layer::Layer(const surfaceflinger::LayerCreationArgs& args)
     mOwnerAppId = mOwnerUid % PER_USER_RANGE;
 
     mPotentialCursor = args.flags & ISurfaceComposerClient::eCursorWindow;
-    mLayerFEs.emplace_back(frontend::LayerHierarchy::TraversalPath{static_cast<uint32_t>(sequence)},
-                           args.flinger->getFactory().createLayerFE(mName, this));
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    mQtiLayerClass = mFlinger->mQtiSFExtnIntf->qtiGetLayerClass(mName);
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 }
 
 void Layer::onFirstRef() {
@@ -362,7 +384,7 @@ aidl::android::hardware::graphics::composer3::Composition Layer::getCompositionT
 // transaction
 // ----------------------------------------------------------------------------
 
-void Layer::commitTransaction() {
+void Layer::commitTransaction() REQUIRES(mFlinger->mStateLock) {
     // Set the present state for all bufferlessSurfaceFramesTX to Presented. The
     // bufferSurfaceFrameTX will be presented in latchBuffer.
     for (auto& [token, surfaceFrame] : mDrawingState.bufferlessSurfaceFramesTX) {
@@ -394,7 +416,8 @@ bool Layer::isLayerFocusedBasedOnPriority(int32_t priority) {
 };
 
 void Layer::setFrameTimelineVsyncForBufferTransaction(const FrameTimelineInfo& info,
-                                                      nsecs_t postTime, gui::GameMode gameMode) {
+                                                      nsecs_t postTime, gui::GameMode gameMode)
+        REQUIRES(mFlinger->mStateLock) {
     mDrawingState.postTime = postTime;
 
     // Check if one of the bufferlessSurfaceFramesTX contains the same vsyncId. This can happen if
@@ -458,7 +481,7 @@ void Layer::addSurfaceFrameDroppedForBuffer(
 
 void Layer::addSurfaceFramePresentedForBuffer(
         std::shared_ptr<frametimeline::SurfaceFrame>& surfaceFrame, nsecs_t acquireFenceTime,
-        nsecs_t currentLatchTime) {
+        nsecs_t currentLatchTime) REQUIRES(mFlinger->mStateLock) {
     surfaceFrame->setAcquireFenceTime(acquireFenceTime);
     surfaceFrame->setPresentState(PresentState::Presented, mLastLatchTime);
     mFlinger->mFrameTimeline->addSurfaceFrame(surfaceFrame);
@@ -466,7 +489,8 @@ void Layer::addSurfaceFramePresentedForBuffer(
 }
 
 std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransaction(
-        const FrameTimelineInfo& info, nsecs_t postTime, gui::GameMode gameMode) {
+        const FrameTimelineInfo& info, nsecs_t postTime, gui::GameMode gameMode)
+        REQUIRES(mFlinger->mStateLock) {
     auto surfaceFrame =
             mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
                                                                  getSequence(), mName,
@@ -488,7 +512,7 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForTransac
 
 std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
         const FrameTimelineInfo& info, nsecs_t queueTime, std::string debugName,
-        gui::GameMode gameMode) {
+        gui::GameMode gameMode) REQUIRES(mFlinger->mStateLock) {
     auto surfaceFrame =
             mFlinger->mFrameTimeline->createSurfaceFrameForToken(info, mOwnerPid, mOwnerUid,
                                                                  getSequence(), mName, debugName,
@@ -506,7 +530,8 @@ std::shared_ptr<frametimeline::SurfaceFrame> Layer::createSurfaceFrameForBuffer(
 }
 
 void Layer::setFrameTimelineVsyncForSkippedFrames(const FrameTimelineInfo& info, nsecs_t postTime,
-                                                  std::string debugName, gui::GameMode gameMode) {
+                                                  std::string debugName, gui::GameMode gameMode)
+        REQUIRES(mFlinger->mStateLock) {
     if (info.skippedFrameVsyncId == FrameTimelineInfo::INVALID_VSYNC_ID) {
         return;
     }
@@ -559,6 +584,9 @@ void Layer::miniDumpHeader(std::string& result) {
     result.append(" Layer name\n");
     result.append("           Z | ");
     result.append(" Window Type | ");
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    result.append(" Layer Class |");
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     result.append(" Comp Type | ");
     result.append(" Transform | ");
     result.append("  Disp Frame (LTRB) | ");
@@ -579,6 +607,9 @@ void Layer::miniDump(std::string& result, const frontend::LayerSnapshot& snapsho
     StringAppendF(&result, "  %10zu | ", snapshot.globalZ);
     StringAppendF(&result, "  %10d | ",
                   snapshot.layerMetadata.getInt32(gui::METADATA_WINDOW_TYPE, 0));
+// QTI_BEGIN: 2024-01-29: Display: sf: enable layerext in Android V
+    StringAppendF(&result, "  %10d | ", mQtiLayerClass);
+// QTI_END: 2024-01-29: Display: sf: enable layerext in Android V
     StringAppendF(&result, "%10s | ", toString(getCompositionType(outputLayer)).c_str());
     const auto& outputLayerState = outputLayer->getState();
     StringAppendF(&result, "%10s | ", toString(outputLayerState.bufferTransform).c_str());
@@ -719,6 +750,10 @@ void Layer::callReleaseBufferCallback(const sp<ITransactionCompletedListener>& l
     uint32_t currentMaxAcquiredBufferCount =
             mFlinger->getMaxAcquiredBufferCountForCurrentRefreshRate(mOwnerUid);
 
+    if (FlagManager::getInstance().monitor_buffer_fences()) {
+        buffer->getDependencyMonitor().addEgress(FenceTime::makeValid(fence), "Layer release");
+    }
+
     if (listener) {
         listener->onReleaseBuffer(callbackId, fence, currentMaxAcquiredBufferCount);
     }
@@ -842,7 +877,7 @@ bool Layer::setTransformToDisplayInverse(bool transformToDisplayInverse) {
     return true;
 }
 
-void Layer::releasePreviousBuffer() {
+void Layer::releasePreviousBuffer() REQUIRES(mFlinger->mStateLock) {
     mReleasePreviousBuffer = true;
     if (!mBufferInfo.mBuffer ||
         (!mDrawingState.buffer->hasSameBuffer(*mBufferInfo.mBuffer) ||
@@ -884,7 +919,8 @@ void Layer::resetDrawingStateBufferInfo() {
 
 bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
                       const BufferData& bufferData, nsecs_t postTime, nsecs_t desiredPresentTime,
-                      bool isAutoTimestamp, const FrameTimelineInfo& info, gui::GameMode gameMode) {
+                      bool isAutoTimestamp, const FrameTimelineInfo& info, gui::GameMode gameMode)
+        REQUIRES(mFlinger->mStateLock) {
     SFTRACE_FORMAT("setBuffer %s - hasBuffer=%s", getDebugName(), (buffer ? "true" : "false"));
 
     const bool frameNumberChanged =
@@ -893,6 +929,14 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
             frameNumberChanged ? bufferData.frameNumber : mDrawingState.frameNumber + 1;
     SFTRACE_FORMAT_INSTANT("setBuffer %s - %" PRIu64, getDebugName(), frameNumber);
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    if (bufferData.qtiInvalid) {
+        callReleaseBufferCallback(bufferData.releaseBufferListener, buffer->getBuffer(),
+                                  bufferData.frameNumber, bufferData.acquireFence);
+        return false;
+    }
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     if (mDrawingState.buffer) {
         releasePreviousBuffer();
     } else if (buffer) {
@@ -936,6 +980,7 @@ bool Layer::setBuffer(std::shared_ptr<renderengine::ExternalTexture>& buffer,
             std::max(mDrawingState.frameNumber, mDrawingState.barrierFrameNumber);
 
     mDrawingState.releaseBufferListener = bufferData.releaseBufferListener;
+    mDrawingState.previousBuffer = std::move(mDrawingState.buffer);
     mDrawingState.buffer = std::move(buffer);
     mDrawingState.acquireFence = bufferData.flags.test(BufferData::BufferDataChange::fenceChanged)
             ? bufferData.acquireFence
@@ -1074,7 +1119,8 @@ bool Layer::setDesiredHdrHeadroom(float desiredRatio) {
 }
 
 bool Layer::setSidebandStream(const sp<NativeHandle>& sidebandStream, const FrameTimelineInfo& info,
-                              nsecs_t postTime, gui::GameMode gameMode) {
+                              nsecs_t postTime, gui::GameMode gameMode)
+        REQUIRES(mFlinger->mStateLock) {
     if (mDrawingState.sidebandStream == sidebandStream) return false;
 
     if (mDrawingState.sidebandStream != nullptr && sidebandStream == nullptr) {
@@ -1117,6 +1163,7 @@ bool Layer::setTransactionCompletedListeners(const std::vector<sp<CallbackHandle
             handle->acquireTimeOrFence = mCallbackHandleAcquireTimeOrFence;
             handle->frameNumber = mDrawingState.frameNumber;
             handle->previousFrameNumber = mDrawingState.previousFrameNumber;
+            handle->previousBuffer = mDrawingState.previousBuffer;
             if (mPreviousReleaseBufferEndpoint == handle->listener) {
                 // Add fence from previous screenshot now so that it can be dispatched to the
                 // client.
@@ -1207,7 +1254,7 @@ bool Layer::latchSidebandStream(bool& recomputeVisibleRegions) {
     return false;
 }
 
-void Layer::updateTexImage(nsecs_t latchTime, bool bgColorOnly) {
+void Layer::updateTexImage(nsecs_t latchTime, bool bgColorOnly) REQUIRES(mFlinger->mStateLock) {
     const State& s(getDrawingState());
 
     if (!s.buffer) {
@@ -1288,31 +1335,30 @@ void Layer::gatherBufferInfo() {
         {
             SFTRACE_NAME("getDataspace");
             err = mapper.getDataspace(mBufferInfo.mBuffer->getBuffer()->handle, &dataspace);
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check for unknown dataspace
+            if (dataspace == ui::Dataspace::UNKNOWN) {
+// QTI_END: 2024-02-28: Display: sf: Add check for unknown dataspace
+// QTI_BEGIN: 2024-12-24: Display: SF: Reduce unknown dataspace log priority
+              ALOGV("%s: Received unknown dataspace from gralloc", __func__);
+// QTI_END: 2024-12-24: Display: SF: Reduce unknown dataspace log priority
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check for unknown dataspace
+            }
+// QTI_END: 2024-02-28: Display: sf: Add check for unknown dataspace
         }
-        if (err != OK || dataspace != mBufferInfo.mDataspace) {
+// QTI_BEGIN: 2024-02-28: Display: sf: Add check for unknown dataspace
+        if ((err != OK || dataspace != mBufferInfo.mDataspace)
+            && dataspace != ui::Dataspace::UNKNOWN) {
+// QTI_END: 2024-02-28: Display: sf: Add check for unknown dataspace
             {
                 SFTRACE_NAME("setDataspace");
                 err = mapper.setDataspace(mBufferInfo.mBuffer->getBuffer()->handle,
                                           static_cast<ui::Dataspace>(mBufferInfo.mDataspace));
             }
-
-            // Some GPU drivers may cache gralloc metadata which means before we composite we need
-            // to upsert RenderEngine's caches. Put in a special workaround to be backwards
-            // compatible with old vendors, with a ticking clock.
-            static const int32_t kVendorVersion =
-                    base::GetIntProperty("ro.board.api_level", __ANDROID_API_FUTURE__);
-            if (const auto format =
-                        static_cast<aidl::android::hardware::graphics::common::PixelFormat>(
-                                mBufferInfo.mBuffer->getPixelFormat());
-                err == OK && kVendorVersion < __ANDROID_API_U__ &&
-                (format ==
-                         aidl::android::hardware::graphics::common::PixelFormat::
-                                 IMPLEMENTATION_DEFINED ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YCBCR_420_888 ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YV12 ||
-                 format == aidl::android::hardware::graphics::common::PixelFormat::YCBCR_P010)) {
-                mBufferInfo.mBuffer->remapBuffer();
-            }
+// QTI_BEGIN: 2024-02-28: Display: sf: upsert RenderEngine's caches
+            // GPU drivers cache gralloc metadata which means before we composite we need
+            // to upsert RenderEngine's cache.
+            mBufferInfo.mBuffer->remapBuffer();
+// QTI_END: 2024-02-28: Display: sf: upsert RenderEngine's caches
         }
     }
     if (lastDataspace != mBufferInfo.mDataspace ||
@@ -1365,6 +1411,15 @@ sp<LayerFE> Layer::getCompositionEngineLayerFE(
     }
     auto layerFE = mFlinger->getFactory().createLayerFE(mName, this);
     mLayerFEs.emplace_back(path, layerFE);
+// QTI_BEGIN: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
+
+    if (getBuffer()) {
+        mQtiIsSecureDisplay = mFlinger->mQtiSFExtnIntf->qtiIsSecureDisplay(
+                static_cast<sp<const GraphicBuffer>>(getBuffer()));
+        mQtiIsSecureCamera = mFlinger->mQtiSFExtnIntf->qtiIsSecureCamera(
+                static_cast<sp<const GraphicBuffer>>(getBuffer()));
+    }
+// QTI_END: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
     return layerFE;
 }
 
@@ -1428,8 +1483,8 @@ void Layer::onCompositionPresented(const DisplayDevice* display,
                                                presentFence,
                                                FrameTracer::FrameEvent::PRESENT_FENCE);
             mDeprecatedFrameTracker.setActualPresentFence(std::shared_ptr<FenceTime>(presentFence));
-        } else if (const auto displayId = PhysicalDisplayId::tryCast(display->getId());
-                   displayId && mFlinger->getHwComposer().isConnected(*displayId)) {
+        } else if (const auto displayId = asPhysicalDisplayId(display->getDisplayIdVariant());
+                   displayId.has_value() && mFlinger->getHwComposer().isConnected(*displayId)) {
             // The HWC doesn't support present fences, so use the present timestamp instead.
             const nsecs_t presentTimestamp =
                     mFlinger->getHwComposer().getPresentTimestamp(*displayId);
@@ -1457,7 +1512,8 @@ void Layer::onCompositionPresented(const DisplayDevice* display,
     mBufferInfo.mFrameLatencyNeeded = false;
 }
 
-bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bool bgColorOnly) {
+bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bool bgColorOnly)
+        REQUIRES(mFlinger->mStateLock) {
     SFTRACE_FORMAT_INSTANT("latchBuffer %s - %" PRIu64, getDebugName(),
                            getDrawingState().frameNumber);
 
@@ -1514,6 +1570,13 @@ bool Layer::latchBufferImpl(bool& recomputeVisibleRegions, nsecs_t latchTime, bo
             recomputeVisibleRegions = true;
         }
     }
+// QTI_BEGIN: 2024-07-19: Display: sf: use correct layer stack id in smomo
+    mFlinger->mQtiSFExtnIntf->qtiSetPresentTime(qtiGetSmomoLayerStackId(), getSequence(),
+// QTI_END: 2024-07-19: Display: sf: use correct layer stack id in smomo
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+                                                mBufferInfo.mDesiredPresentTime);
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     return true;
 }
 
@@ -1616,6 +1679,18 @@ void Layer::setIsSmallDirty(frontend::LayerSnapshot* snapshot) {
                                                    bounds.getWidth() * bounds.getHeight());
 }
 
+// QTI_BEGIN: 2024-07-19: Display: sf: use correct layer stack id in smomo
+void Layer::qtiSetSmomoLayerStackId(uint32_t id) {
+    qtiSmomoLayerStackId = id;
+// QTI_END: 2024-07-19: Display: sf: use correct layer stack id in smomo
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+}
+
+uint32_t Layer::qtiGetSmomoLayerStackId() {
+    return qtiSmomoLayerStackId;
+}
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 } // namespace android
 
 #if defined(__gl_h_)

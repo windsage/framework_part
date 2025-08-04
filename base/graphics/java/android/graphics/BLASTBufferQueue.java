@@ -26,6 +26,7 @@ import java.util.function.Consumer;
 /**
  * @hide
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public final class BLASTBufferQueue {
     // Note: This field is accessed by native code.
     public long mNativeObject; // BLASTBufferQueue*
@@ -33,6 +34,10 @@ public final class BLASTBufferQueue {
     private static native long nativeCreate(String name, boolean updateDestinationFrame);
     private static native void nativeDestroy(long ptr);
     private static native Surface nativeGetSurface(long ptr, boolean includeSurfaceControlHandle);
+// QTI_BEGIN: 2021-05-11: Performance: refactor pre-rendering feature for BLASTBufferQueue
+    private static native void nativeSetUndequeuedBufferCount(long ptr, int count);
+    private static native int nativeGetUndequeuedBufferCount(long ptr);
+// QTI_END: 2021-05-11: Performance: refactor pre-rendering feature for BLASTBufferQueue
     private static native boolean nativeSyncNextTransaction(long ptr,
             Consumer<SurfaceControl.Transaction> callback, boolean acquireSingleBuffer);
     private static native void nativeStopContinuousSyncTransaction(long ptr);
@@ -49,18 +54,25 @@ public final class BLASTBufferQueue {
     private static native void nativeSetTransactionHangCallback(long ptr,
             TransactionHangCallback callback);
     private static native void nativeSetApplyToken(long ptr, IBinder applyToken);
+    private static native void nativeSetWaitForBufferReleaseCallback(long ptr,
+            WaitForBufferReleaseCallback callback);
 
     public interface TransactionHangCallback {
         void onTransactionHang(String reason);
     }
 
-    /** Create a new connection with the surface flinger. */
-    public BLASTBufferQueue(String name, SurfaceControl sc, int width, int height,
-            @PixelFormat.Format int format) {
-        this(name, true /* updateDestinationFrame */);
-        update(sc, width, height, format);
+
+    public interface WaitForBufferReleaseCallback {
+        /**
+         * Indicates that the client is waiting on buffer release
+         * due to no free buffers being available to render into.
+         * @param durationNanos The length of time in nanoseconds
+         * that the client was blocked on buffer release.
+         */
+        void onWaitForBufferRelease(long durationNanos);
     }
 
+    /** Create a new connection with the surface flinger. */
     public BLASTBufferQueue(String name, boolean updateDestinationFrame) {
         mNativeObject = nativeCreate(name, updateDestinationFrame);
     }
@@ -85,6 +97,22 @@ public final class BLASTBufferQueue {
         return nativeGetSurface(mNativeObject, true /* includeSurfaceControlHandle */);
     }
 
+// QTI_BEGIN: 2021-05-11: Performance: refactor pre-rendering feature for BLASTBufferQueue
+    /**
+     * Set undequeued buffer count
+     */
+    public void setUndequeuedBufferCount(int count) {
+        nativeSetUndequeuedBufferCount(mNativeObject, count);
+    }
+
+    /**
+     * @return the count of undequeued buffer
+     */
+    public int getUndequeuedBufferCount() {
+        return nativeGetUndequeuedBufferCount(mNativeObject);
+    }
+
+// QTI_END: 2021-05-11: Performance: refactor pre-rendering feature for BLASTBufferQueue
     /**
      * Send a callback that accepts a transaction to BBQ. BBQ will acquire buffers into the a
      * transaction it created and will eventually send the transaction into the callback
@@ -209,5 +237,12 @@ public final class BLASTBufferQueue {
 
     public void setApplyToken(IBinder applyToken) {
         nativeSetApplyToken(mNativeObject, applyToken);
+    }
+
+    /**
+     * Propagate callback about being blocked on buffer release.
+     */
+    public void setWaitForBufferReleaseCallback(WaitForBufferReleaseCallback waitCallback) {
+        nativeSetWaitForBufferReleaseCallback(mNativeObject, waitCallback);
     }
 }

@@ -25,6 +25,7 @@ import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Color;
+import android.hardware.input.InputManager;
 import android.telephony.PinResult;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
@@ -89,17 +90,19 @@ public class KeyguardSimPukViewController
             SecurityMode securityMode, LockPatternUtils lockPatternUtils,
             KeyguardSecurityCallback keyguardSecurityCallback,
             KeyguardMessageAreaController.Factory messageAreaControllerFactory,
-            LatencyTracker latencyTracker, LiftToActivateListener liftToActivateListener,
+            LatencyTracker latencyTracker,
             TelephonyManager telephonyManager, FalsingCollector falsingCollector,
             EmergencyButtonController emergencyButtonController, FeatureFlags featureFlags,
             SelectedUserInteractor selectedUserInteractor,
             KeyguardKeyboardInteractor keyguardKeyboardInteractor,
             BouncerHapticPlayer bouncerHapticPlayer,
-            UserActivityNotifier userActivityNotifier) {
+            UserActivityNotifier userActivityNotifier,
+            InputManager inputManager) {
         super(view, keyguardUpdateMonitor, securityMode, lockPatternUtils, keyguardSecurityCallback,
-                messageAreaControllerFactory, latencyTracker, liftToActivateListener,
+                messageAreaControllerFactory, latencyTracker,
                 emergencyButtonController, falsingCollector, featureFlags, selectedUserInteractor,
-                keyguardKeyboardInteractor, bouncerHapticPlayer, userActivityNotifier);
+                keyguardKeyboardInteractor, bouncerHapticPlayer, userActivityNotifier, inputManager
+        );
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mTelephonyManager = telephonyManager;
         mSimImageView = mView.findViewById(R.id.keyguard_sim);
@@ -202,7 +205,7 @@ public class KeyguardSimPukViewController
         if (mRemainingAttempts >= 0) {
             mMessageAreaController.setMessage(mView.getPukPasswordErrorMessage(
                     mRemainingAttempts, true,
-                    KeyguardEsimArea.isEsimLocked(mView.getContext(), mSubId)));
+                    KeyguardEsimArea.isEsimLocked(mView.getContext(), mSubId), mSubId));
             return;
         }
 
@@ -244,12 +247,14 @@ public class KeyguardSimPukViewController
                 else {
                     Log.d(TAG, "onSimCheckResponse " + " empty One result "
                             + result.toString());
-                    if (result.getAttemptsRemaining() >= 0) {
+// QTI_BEGIN: 2023-01-18: Telephony: Fix incorrect text shown at PUK lock screen
+                    if (result.getAttemptsRemaining() > 0) {
+// QTI_END: 2023-01-18: Telephony: Fix incorrect text shown at PUK lock screen
                         mRemainingAttempts = result.getAttemptsRemaining();
                         mMessageAreaController.setMessage(
                                 mView.getPukPasswordErrorMessage(
                                         result.getAttemptsRemaining(), true,
-                                        KeyguardEsimArea.isEsimLocked(mView.getContext(), mSubId)));
+                                        KeyguardEsimArea.isEsimLocked(mView.getContext(), mSubId), mSubId));
                     }
                 }
             }
@@ -307,7 +312,7 @@ public class KeyguardSimPukViewController
                                 // show message
                                 mMessageAreaController.setMessage(mView.getPukPasswordErrorMessage(
                                         result.getAttemptsRemaining(), false,
-                                        KeyguardEsimArea.isEsimLocked(mView.getContext(), mSubId)));
+                                        KeyguardEsimArea.isEsimLocked(mView.getContext(), mSubId), mSubId));
                                 if (result.getAttemptsRemaining() <= 2) {
                                     // this is getting critical - show dialog
                                     getPukRemainingAttemptsDialog(
@@ -318,7 +323,7 @@ public class KeyguardSimPukViewController
                                             mView.getPukPasswordErrorMessage(
                                                     result.getAttemptsRemaining(), false,
                                                     KeyguardEsimArea.isEsimLocked(
-                                                            mView.getContext(), mSubId)));
+                                                            mView.getContext(), mSubId), mSubId));
                                 }
                             } else {
                                 mMessageAreaController.setMessage(mView.getResources().getString(
@@ -373,7 +378,7 @@ public class KeyguardSimPukViewController
 
     private Dialog getPukRemainingAttemptsDialog(int remaining) {
         String msg = mView.getPukPasswordErrorMessage(remaining, false,
-                KeyguardEsimArea.isEsimLocked(mView.getContext(), mSubId));
+                KeyguardEsimArea.isEsimLocked(mView.getContext(), mSubId), mSubId);
         if (mRemainingAttemptsDialog == null) {
             AlertDialog.Builder builder = new AlertDialog.Builder(mView.getContext());
             builder.setMessage(msg);

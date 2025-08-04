@@ -14,10 +14,19 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 #pragma once
 
 #include <cstdint>
 
+#include <android/gui/BorderSettings.h>
 #include <android/gui/CachingHint.h>
 #include <gui/DisplayLuts.h>
 #include <gui/HdrMetadata.h>
@@ -141,6 +150,9 @@ struct LayerFECompositionState {
 
     ShadowSettings shadowSettings;
 
+    // The settings to configure the outline of a layer.
+    gui::BorderSettings borderSettings;
+
     // List of regions that require blur
     std::vector<BlurRegion> blurRegions;
 
@@ -236,6 +248,15 @@ struct LayerFECompositionState {
 
     // Debugging
     virtual void dump(std::string& out) const;
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+
+    bool qtiIsSecureDisplay{false};
+    bool qtiIsSecureCamera{false};
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    uint32_t qtiLayerClass; // Layer Classification
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+
 };
 
 } // namespace android::compositionengine

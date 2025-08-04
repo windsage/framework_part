@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 #pragma once
 
 #include <android/gui/DropInputMode.h>
@@ -117,6 +125,7 @@ public:
         uint32_t bufferTransform;
         bool transformToDisplayInverse;
         Region transparentRegionHint;
+        std::shared_ptr<renderengine::ExternalTexture> previousBuffer;
         std::shared_ptr<renderengine::ExternalTexture> buffer;
         sp<Fence> acquireFence;
         std::shared_ptr<FenceTime> acquireFenceTime;
@@ -288,7 +297,7 @@ public:
                                         bool leaveState);
 
     inline bool hasTrustedPresentationListener() {
-        return mTrustedPresentationListener.callbackInterface != nullptr;
+        return mTrustedPresentationListener.getCallback() != nullptr;
     }
 
     // Sets the masked bits.
@@ -406,6 +415,20 @@ public:
     // Check if the damage region is a small dirty.
     void setIsSmallDirty(frontend::LayerSnapshot* snapshot);
 
+// QTI_BEGIN: 2024-07-19: Display: sf: use correct layer stack id in smomo
+    void qtiSetSmomoLayerStackId(uint32_t id);
+// QTI_END: 2024-07-19: Display: sf: use correct layer stack id in smomo
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    uint32_t qtiGetSmomoLayerStackId();
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2024-01-29: Display: sf: enable layerext in Android V
+    uint32_t qtiGetLayerClass() { return mQtiLayerClass; };
+// QTI_END: 2024-01-29: Display: sf: enable layerext in Android V
+// QTI_BEGIN: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
+    bool qtiIsSecureDisplay() { return mQtiIsSecureDisplay; };
+    bool qtiIsSecureCamera() { return mQtiIsSecureCamera; };
+// QTI_END: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
+
 protected:
     // For unit tests
     friend class TestableSurfaceFlinger;
@@ -442,6 +465,13 @@ protected:
     // Timestamp history for UIAutomation. Thread safe.
     FrameTracker mDeprecatedFrameTracker;
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    uint32_t mQtiLayerClass{0};
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
+    bool mQtiIsSecureDisplay = false;
+    bool mQtiIsSecureCamera = false;
+// QTI_END: 2025-01-07: Display: sf: Update LayerFE's composition state before composition
     // main thread
     sp<NativeHandle> mSidebandStream;
 
@@ -516,11 +546,6 @@ private:
 
     bool mGetHandleCalled = false;
 
-    // The inherited shadow radius after taking into account the layer hierarchy. This is the
-    // final shadow radius for this layer. If a shadow is specified for a layer, then effective
-    // shadow radius is the set shadow radius, otherwise its the parent's shadow radius.
-    float mEffectiveShadowRadius = 0.f;
-
     // Game mode for the layer. Set by WindowManagerShell and recorded by SurfaceFlingerStats.
     gui::GameMode mGameMode = gui::GameMode::Unsupported;
 
@@ -560,6 +585,9 @@ private:
     // not specify a destination frame.
     ui::Transform mRequestedTransform;
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    uint32_t qtiSmomoLayerStackId = UINT32_MAX;
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     std::vector<std::pair<frontend::LayerHierarchy::TraversalPath, sp<LayerFE>>> mLayerFEs;
     bool mHandleAlive = false;
     std::optional<std::reference_wrapper<frametimeline::FrameTimeline>> getTimeline() const {

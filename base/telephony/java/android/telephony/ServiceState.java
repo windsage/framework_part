@@ -16,7 +16,6 @@
 
 package android.telephony;
 
-import android.annotation.FlaggedApi;
 import android.annotation.IntDef;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -36,7 +35,6 @@ import android.telephony.NetworkRegistrationInfo.Domain;
 import android.telephony.NetworkRegistrationInfo.NRState;
 import android.text.TextUtils;
 
-import com.android.internal.telephony.flags.Flags;
 import com.android.telephony.Rlog;
 
 import java.lang.annotation.Retention;
@@ -233,12 +231,6 @@ public class ServiceState implements Parcelable {
     public static final int  RIL_RADIO_TECHNOLOGY_NR = 20;
 
     /**
-     * 3GPP NB-IOT (Narrowband Internet of Things) over Non-Terrestrial-Networks technology.
-     * @hide
-     */
-    public static final int RIL_RADIO_TECHNOLOGY_NB_IOT_NTN = 21;
-
-    /**
      * RIL Radio Annotation
      * @hide
      */
@@ -264,16 +256,14 @@ public class ServiceState implements Parcelable {
         ServiceState.RIL_RADIO_TECHNOLOGY_TD_SCDMA,
         ServiceState.RIL_RADIO_TECHNOLOGY_IWLAN,
         ServiceState.RIL_RADIO_TECHNOLOGY_LTE_CA,
-        ServiceState.RIL_RADIO_TECHNOLOGY_NR,
-        ServiceState.RIL_RADIO_TECHNOLOGY_NB_IOT_NTN
-    })
+        ServiceState.RIL_RADIO_TECHNOLOGY_NR})
     public @interface RilRadioTechnology {}
 
 
     /**
      * The number of the radio technologies.
      */
-    private static final int NEXT_RIL_RADIO_TECHNOLOGY = 22;
+    private static final int NEXT_RIL_RADIO_TECHNOLOGY = 21;
 
     /** @hide */
     public static final int RIL_RADIO_CDMA_TECHNOLOGY_BITMASK =
@@ -1130,12 +1120,13 @@ public class ServiceState implements Parcelable {
             case RIL_RADIO_TECHNOLOGY_LTE_CA:
                 rtString = "LTE_CA";
                 break;
+// QTI_BEGIN: 2019-06-21: Telephony: Add NR data RAT support
             case RIL_RADIO_TECHNOLOGY_NR:
+// QTI_END: 2019-06-21: Telephony: Add NR data RAT support
                 rtString = "NR_SA";
+// QTI_BEGIN: 2019-06-21: Telephony: Add NR data RAT support
                 break;
-            case RIL_RADIO_TECHNOLOGY_NB_IOT_NTN:
-                rtString = "NB_IOT_NTN";
-                break;
+// QTI_END: 2019-06-21: Telephony: Add NR data RAT support
             default:
                 rtString = "Unexpected";
                 Rlog.w(LOG_TAG, "Unexpected radioTechnology=" + rt);
@@ -1230,8 +1221,17 @@ public class ServiceState implements Parcelable {
 
     /**
      * Initialize the service state. Set everything to the default value.
+// QTI_BEGIN: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
+     *
+     * @param legacyMode {@code true} if the device is on IWLAN legacy mode, where IWLAN is
+     * considered as a RAT on WWAN {@link NetworkRegistrationInfo}. {@code false} if the device
+     * is on AP-assisted mode, where IWLAN should be reported through WLAN.
+     * {@link NetworkRegistrationInfo}.
+// QTI_END: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
      */
-    private void init() {
+// QTI_BEGIN: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
+    private void init(boolean legacyMode) {
+// QTI_END: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
         if (DBG) Rlog.d(LOG_TAG, "init");
         mVoiceRegState = STATE_OUT_OF_SERVICE;
         mDataRegState = STATE_OUT_OF_SERVICE;
@@ -1263,11 +1263,15 @@ public class ServiceState implements Parcelable {
                     .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WWAN)
                     .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_UNKNOWN)
                     .build());
-            addNetworkRegistrationInfo(new NetworkRegistrationInfo.Builder()
-                    .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
-                    .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WLAN)
-                    .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_UNKNOWN)
-                    .build());
+// QTI_BEGIN: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
+            if (!legacyMode) {
+                addNetworkRegistrationInfo(new NetworkRegistrationInfo.Builder()
+                        .setDomain(NetworkRegistrationInfo.DOMAIN_PS)
+                        .setTransportType(AccessNetworkConstants.TRANSPORT_TYPE_WLAN)
+                        .setRegistrationState(NetworkRegistrationInfo.REGISTRATION_STATE_UNKNOWN)
+                        .build());
+            }
+// QTI_END: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
         }
         mOperatorAlphaLongRaw = null;
         mOperatorAlphaShortRaw = null;
@@ -1276,11 +1280,15 @@ public class ServiceState implements Parcelable {
     }
 
     public void setStateOutOfService() {
-        init();
+// QTI_BEGIN: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
+        init(true);
+// QTI_END: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
     }
 
     public void setStateOff() {
-        init();
+// QTI_BEGIN: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
+        init(true);
+// QTI_END: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
         mVoiceRegState = STATE_POWER_OFF;
         mDataRegState = STATE_POWER_OFF;
     }
@@ -1288,11 +1296,18 @@ public class ServiceState implements Parcelable {
     /**
      * Set the service state to out-of-service
      *
+// QTI_BEGIN: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
+     * @param legacyMode {@code true} if the device is on IWLAN legacy mode, where IWLAN is
+     * considered as a RAT on WWAN {@link NetworkRegistrationInfo}. {@code false} if the device
+     * is on AP-assisted mode, where IWLAN should be reported through WLAN.
+// QTI_END: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
      * @param powerOff {@code true} if this is a power off case (i.e. Airplane mode on).
      * @hide
      */
-    public void setOutOfService(boolean powerOff) {
-        init();
+// QTI_BEGIN: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
+    public void setOutOfService(boolean legacyMode, boolean powerOff) {
+        init(legacyMode);
+// QTI_END: 2023-06-02: Telephony: Revert "Removed IWLAN legacy mode support"
         if (powerOff) {
             mVoiceRegState = STATE_POWER_OFF;
             mDataRegState = STATE_POWER_OFF;
@@ -1679,8 +1694,6 @@ public class ServiceState implements Parcelable {
                 return TelephonyManager.NETWORK_TYPE_LTE_CA;
             case RIL_RADIO_TECHNOLOGY_NR:
                 return TelephonyManager.NETWORK_TYPE_NR;
-            case RIL_RADIO_TECHNOLOGY_NB_IOT_NTN:
-                return TelephonyManager.NETWORK_TYPE_NB_IOT_NTN;
             default:
                 return TelephonyManager.NETWORK_TYPE_UNKNOWN;
         }
@@ -1710,7 +1723,6 @@ public class ServiceState implements Parcelable {
                 return AccessNetworkType.CDMA2000;
             case RIL_RADIO_TECHNOLOGY_LTE:
             case RIL_RADIO_TECHNOLOGY_LTE_CA:
-            case RIL_RADIO_TECHNOLOGY_NB_IOT_NTN:
                 return AccessNetworkType.EUTRAN;
             case RIL_RADIO_TECHNOLOGY_NR:
                 return AccessNetworkType.NGRAN;
@@ -1769,10 +1781,10 @@ public class ServiceState implements Parcelable {
                 return RIL_RADIO_TECHNOLOGY_IWLAN;
             case TelephonyManager.NETWORK_TYPE_LTE_CA:
                 return RIL_RADIO_TECHNOLOGY_LTE_CA;
+// QTI_BEGIN: 2019-06-21: Telephony: Add NR data RAT support
             case TelephonyManager.NETWORK_TYPE_NR:
+// QTI_END: 2019-06-21: Telephony: Add NR data RAT support
                 return RIL_RADIO_TECHNOLOGY_NR;
-            case TelephonyManager.NETWORK_TYPE_NB_IOT_NTN:
-                return RIL_RADIO_TECHNOLOGY_NB_IOT_NTN;
             default:
                 return RIL_RADIO_TECHNOLOGY_UNKNOWN;
         }
@@ -1881,9 +1893,10 @@ public class ServiceState implements Parcelable {
                 || radioTechnology == RIL_RADIO_TECHNOLOGY_GSM
                 || radioTechnology == RIL_RADIO_TECHNOLOGY_TD_SCDMA
                 || radioTechnology == RIL_RADIO_TECHNOLOGY_IWLAN
+// QTI_BEGIN: 2019-05-03: Telephony: Support for radio technology NR
                 || radioTechnology == RIL_RADIO_TECHNOLOGY_LTE_CA
-                || radioTechnology == RIL_RADIO_TECHNOLOGY_NR
-                || radioTechnology == RIL_RADIO_TECHNOLOGY_NB_IOT_NTN;
+// QTI_END: 2019-05-03: Telephony: Support for radio technology NR
+                || radioTechnology == RIL_RADIO_TECHNOLOGY_NR;
 
     }
 
@@ -1903,10 +1916,18 @@ public class ServiceState implements Parcelable {
     public static boolean isPsOnlyTech(int radioTechnology) {
         return radioTechnology == RIL_RADIO_TECHNOLOGY_LTE
                 || radioTechnology == RIL_RADIO_TECHNOLOGY_LTE_CA
-                || radioTechnology == RIL_RADIO_TECHNOLOGY_NR
-                || radioTechnology == RIL_RADIO_TECHNOLOGY_NB_IOT_NTN;
+                || radioTechnology == RIL_RADIO_TECHNOLOGY_NR;
     }
 
+// QTI_BEGIN: 2019-05-03: Telephony: Support for radio technology NR
+    /** @hide */
+    public static boolean isPsTech(int radioTechnology) {
+        return radioTechnology == RIL_RADIO_TECHNOLOGY_LTE ||
+                radioTechnology == RIL_RADIO_TECHNOLOGY_LTE_CA ||
+                radioTechnology == RIL_RADIO_TECHNOLOGY_NR;
+    }
+
+// QTI_END: 2019-05-03: Telephony: Support for radio technology NR
     /** @hide */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     public static boolean bearerBitmapHasCdma(int networkTypeBitmask) {
@@ -2280,7 +2301,6 @@ public class ServiceState implements Parcelable {
      *
      * @return {@code true} if device is connected to a non-terrestrial network else {@code false}.
      */
-    @FlaggedApi(Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     public boolean isUsingNonTerrestrialNetwork() {
         synchronized (mNetworkRegistrationInfos) {
             for (NetworkRegistrationInfo nri : mNetworkRegistrationInfos) {

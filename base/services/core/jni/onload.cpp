@@ -33,6 +33,7 @@ int register_android_server_power_stats_CpuPowerStatsCollector(JNIEnv* env);
 int register_android_server_HintManagerService(JNIEnv* env);
 int register_android_server_storage_AppFuse(JNIEnv* env);
 int register_android_server_SystemServer(JNIEnv* env);
+int register_android_server_UsbAlsaDevice(JNIEnv* env);
 int register_android_server_UsbAlsaJackDetector(JNIEnv* env);
 int register_android_server_UsbAlsaMidiDevice(JNIEnv* env);
 int register_android_server_UsbDeviceManager(JavaVM* vm, JNIEnv* env);
@@ -40,6 +41,7 @@ int register_android_server_UsbHostManager(JNIEnv* env);
 int register_android_server_vibrator_VibratorController(JavaVM* vm, JNIEnv* env);
 int register_android_server_vibrator_VibratorManagerService(JavaVM* vm, JNIEnv* env);
 int register_android_server_location_GnssLocationProvider(JNIEnv* env);
+int register_android_server_connectivity_Vpn(JNIEnv* env);
 int register_android_server_devicepolicy_CryptoTestHelper(JNIEnv*);
 int register_android_server_tv_TvUinputBridge(JNIEnv* env);
 int register_android_server_tv_TvInputHal(JNIEnv* env);
@@ -69,8 +71,14 @@ int register_com_android_server_wm_TaskFpsCallbackController(JNIEnv* env);
 int register_com_android_server_display_DisplayControl(JNIEnv* env);
 int register_com_android_server_SystemClockTime(JNIEnv* env);
 int register_android_server_display_smallAreaDetectionController(JNIEnv* env);
+// QTI_BEGIN: 2019-11-13: Core: Add mechanism to improve consistancy of notification
+int register_android_server_ActivityTriggerService(JNIEnv* env);
+// QTI_END: 2019-11-13: Core: Add mechanism to improve consistancy of notification
 int register_com_android_server_accessibility_BrailleDisplayConnection(JNIEnv* env);
 int register_android_server_am_PhantomProcessList(JNIEnv* env);
+//T-HUB Core[SPD]:added for trancare by chongyang.zhang 2022.05.23 start
+int register_com_transsion_hubcore_server_trancare_trancare_TranTrancareCtrlNative(JNIEnv* env);
+//T-HUB Core[SPD]:added for trancare by chongyang.zhang 2022.05.23 end
 
 // Note: Consider adding new JNI entrypoints for optional services to
 // LazyJniRegistrar instead, and relying on lazy registration.
@@ -98,6 +106,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* /* reserved */)
     register_android_server_InputManager(env);
     register_android_server_LightsService(env);
     register_android_server_UsbDeviceManager(vm, env);
+    register_android_server_UsbAlsaDevice(env);
     register_android_server_UsbAlsaJackDetector(env);
     register_android_server_UsbAlsaMidiDevice(env);
     register_android_server_UsbHostManager(env);
@@ -105,6 +114,7 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* /* reserved */)
     register_android_server_vibrator_VibratorManagerService(vm, env);
     register_android_server_SystemServer(env);
     register_android_server_location_GnssLocationProvider(env);
+    register_android_server_connectivity_Vpn(env);
     register_android_server_devicepolicy_CryptoTestHelper(env);
     register_android_server_BatteryStatsService(env);
     register_android_server_tv_TvUinputBridge(env);
@@ -135,7 +145,11 @@ extern "C" jint JNI_OnLoad(JavaVM* vm, void* /* reserved */)
     register_com_android_server_display_DisplayControl(env);
     register_com_android_server_SystemClockTime(env);
     register_android_server_display_smallAreaDetectionController(env);
+// QTI_BEGIN: 2019-11-13: Core: Add mechanism to improve consistancy of notification
+    register_android_server_ActivityTriggerService(env);
+// QTI_END: 2019-11-13: Core: Add mechanism to improve consistancy of notification
     register_com_android_server_accessibility_BrailleDisplayConnection(env);
     register_android_server_am_PhantomProcessList(env);
+    register_com_transsion_hubcore_server_trancare_trancare_TranTrancareCtrlNative(env);
     return JNI_VERSION_1_4;
 }

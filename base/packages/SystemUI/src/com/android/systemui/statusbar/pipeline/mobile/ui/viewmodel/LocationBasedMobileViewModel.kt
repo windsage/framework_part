@@ -13,9 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel
-
 import android.graphics.Color
 import com.android.systemui.statusbar.phone.StatusBarLocation
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.MobileIconInteractor
@@ -25,7 +23,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
-
 /**
  * A view model for an individual mobile icon that embeds the notion of a [StatusBarLocation]. This
  * allows the mobile icon to change some view parameters at different locations
@@ -41,7 +38,6 @@ abstract class LocationBasedMobileViewModel(
     val verboseLogger: VerboseMobileViewLogger?,
 ) : MobileIconViewModelCommon by commonImpl {
     val defaultColor: Int = Color.WHITE
-
     companion object {
         fun viewModelForLocation(
             commonImpl: MobileIconViewModelCommon,
@@ -67,7 +63,6 @@ abstract class LocationBasedMobileViewModel(
             }
     }
 }
-
 class HomeMobileIconViewModel(
     commonImpl: MobileIconViewModelCommon,
     verboseMobileViewLogger: VerboseMobileViewLogger,
@@ -78,7 +73,6 @@ class HomeMobileIconViewModel(
         location = StatusBarLocation.HOME,
         verboseMobileViewLogger,
     )
-
 class QsMobileIconViewModel(
     commonImpl: MobileIconViewModelCommon,
 ) :
@@ -89,7 +83,6 @@ class QsMobileIconViewModel(
         // Only do verbose logging for the Home location.
         verboseLogger = null,
     )
-
 class ShadeCarrierGroupMobileIconViewModel(
     commonImpl: MobileIconViewModelCommon,
     interactor: MobileIconInteractor,
@@ -103,7 +96,9 @@ class ShadeCarrierGroupMobileIconViewModel(
         verboseLogger = null,
     ) {
     private val isSingleCarrier = interactor.isSingleCarrier
-    val carrierName = interactor.carrierName
+// QTI_BEGIN: 2024-03-10: Android_UI: SystemUI: Readapt the ShadeCarrier SPN display customization
+    val carrierName = interactor.customizedCarrierName
+// QTI_END: 2024-03-10: Android_UI: SystemUI: Readapt the ShadeCarrier SPN display customization
 
     override val isVisible: StateFlow<Boolean> =
         combine(super.isVisible, isSingleCarrier) { isVisible, isSingleCarrier ->
@@ -111,7 +106,6 @@ class ShadeCarrierGroupMobileIconViewModel(
             }
             .stateIn(scope, SharingStarted.WhileSubscribed(), super.isVisible.value)
 }
-
 class KeyguardMobileIconViewModel(
     commonImpl: MobileIconViewModelCommon,
 ) :

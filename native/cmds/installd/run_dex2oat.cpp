@@ -93,6 +93,13 @@ void RunDex2Oat::Initialize(const UniqueFile& output_oat,
                                debuggable, target_sdk_version, enable_hidden_api_checks,
                                generate_compact_dex, compilation_reason);
 
+    //SPD: modify for dexopt threads by fan.feng1 20230703 start
+    std::string dex2oat_cpu_threads = GetProperty("persist.sys.dex2oat.threads", "");
+    if(!dex2oat_cpu_threads.empty() && dex2oat_cpu_threads != "0") {
+        AddArg(MapPropertyToArg("dalvik.vm.background-dex2oat-threads", "-j%s", dex2oat_cpu_threads.c_str()));
+    }
+    //SPD: modify for dexopt threads by fan.feng1 20230703 end
+
     PrepareCompilerRuntimeAndPerfConfigFlags(post_bootcomplete, for_restore,
                                              background_job_compile);
 

@@ -49,6 +49,13 @@ static const char* kPathAllowlist[] = {
         "/dev/dri/renderD129", // Fixes b/31172436
         "/dev/stune/foreground/tasks",
         "/dev/blkio/tasks",
+        //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 start
+        "/system/framework/thub-res.apk",
+        "/apex/com.transsion.thub.core/javalib/thub-framework.jar",
+        "/apex/com.transsion.thub.core/javalib/thub-services.jar",
+        "/apex/com.transsion.thub.core/javalib/thub-common.jar",
+        "/apex/com.transsion.thub.core/javalib/thub-telephony.jar",
+        //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 end
         "/metadata/aconfig/maps/system.package.map",
         "/metadata/aconfig/maps/system.flag.map",
         "/metadata/aconfig/boot/system.val"

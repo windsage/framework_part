@@ -15,6 +15,10 @@
  */
 
 #include "InputThread.h"
+// SPD: modify inputReader/inputDispatch prio to RT(98) by sifengtian 20231110 start
+#include <utils/Thread.h>
+#include <sched.h>
+// SPD: modify inputReader/inputDispatch prio to RT(98) by sifengtian 20231110 end
 
 #include <android-base/logging.h>
 #include <com_android_input_flags.h>
@@ -58,8 +62,15 @@ private:
 InputThread::InputThread(std::string name, std::function<void()> loop, std::function<void()> wake,
                          bool isInCriticalPath)
       : mThreadWake(wake) {
+    // SPD: modify inputReader/inputDispatch prio to RT(98) by sifengtian 20231110 start
+    struct sched_param param;
     mThread = sp<InputThreadImpl>::make(loop);
     mThread->run(name.c_str(), ANDROID_PRIORITY_URGENT_DISPLAY);
+    int policy = SCHED_FIFO;
+    int min_priority = sched_get_priority_min(policy);
+    param.sched_priority = min_priority;
+    sched_setscheduler(mThread->getTid(), policy, &param);
+    // SPD: modify inputReader/inputDispatch prio to RT(98) by sifengtian 20231110 end
     if (input_flags::enable_input_policy_profile() && isInCriticalPath) {
         if (!applyInputEventProfile(*mThread)) {
             LOG(ERROR) << "Couldn't apply input policy profile for " << name;

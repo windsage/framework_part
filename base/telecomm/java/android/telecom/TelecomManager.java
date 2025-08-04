@@ -29,6 +29,7 @@ import android.annotation.SuppressAutoDoc;
 import android.annotation.SuppressLint;
 import android.annotation.SystemApi;
 import android.annotation.SystemService;
+import android.annotation.TestApi;
 import android.compat.annotation.ChangeId;
 import android.compat.annotation.EnabledSince;
 import android.compat.annotation.UnsupportedAppUsage;
@@ -199,6 +200,19 @@ public class TelecomManager {
     public static final String ACTION_DEFAULT_DIALER_CHANGED =
             "android.telecom.action.DEFAULT_DIALER_CHANGED";
 
+// QTI_BEGIN: 2018-06-13: Bluetooth: BT: Send info if call is CS type from telecomm service to BT apps.
+    /**
+     *@hide Broadcast intent action indicating the call type(CS call or Non-CS call).
+     * The string extra {@link #EXTRA_CALL_TYPE_CS} will contain the
+     * boolean value true if call is CS call else false.
+     *
+     * @see #EXTRA_CALL_TYPE_CS
+     */
+    public static final String ACTION_CALL_TYPE =
+            "codeaurora.telecom.action.CALL_TYPE";
+
+
+// QTI_END: 2018-06-13: Bluetooth: BT: Send info if call is CS type from telecomm service to BT apps.
     /**
      * Extra value used to provide the package name for {@link #ACTION_CHANGE_DEFAULT_DIALER}.
      */
@@ -404,6 +418,15 @@ public class TelecomManager {
             "android.telecom.extra.IS_USER_INTENT_EMERGENCY_CALL";
 
     /**
+     * Optional extra for {@link #ACTION_INCOMING_CALL} containing a boolean to indicate that the
+     * call has an externally generated ringer. Used by the HfpClientConnectionService when In Band
+     * Ringtone is enabled to prevent two ringers from being generated.
+     * @hide
+     */
+    public static final String EXTRA_CALL_EXTERNAL_RINGER =
+            "android.telecom.extra.CALL_EXTERNAL_RINGER";
+
+    /**
      * A mandatory extra containing a {@link Uri} to be passed in when calling
      * {@link #addNewUnknownCall(PhoneAccountHandle, Bundle)}. The {@link Uri} value indicates
      * the remote handle of the new call.
@@ -518,6 +541,15 @@ public class TelecomManager {
     public static final String EXTRA_CALL_NETWORK_TYPE =
             "android.telecom.extra.CALL_NETWORK_TYPE";
 
+// QTI_BEGIN: 2018-06-13: Bluetooth: BT: Send info if call is CS type from telecomm service to BT apps.
+    /**
+     *@hide  Extra value used to provide the call type for {@link #ACTION_CALL_TYPE}.
+     */
+    public static final String EXTRA_CALL_TYPE_CS =
+            "codeaurora.telecom.extra.CALL_TYPE_CS";
+
+
+// QTI_END: 2018-06-13: Bluetooth: BT: Send info if call is CS type from telecomm service to BT apps.
     /**
      * An optional {@link android.content.Intent#ACTION_CALL} intent extra denoting the
      * package name of the app specifying an alternative gateway for the call.
@@ -1883,6 +1915,34 @@ public class TelecomManager {
             }
         }
         return null;
+    }
+
+    /**
+     * This test API determines the foreground service delegation state for a VoIP app that adds
+     * calls via {@link TelecomManager#addCall(CallAttributes, Executor, OutcomeReceiver,
+     * CallControlCallback, CallEventCallback)}.  Foreground Service Delegation allows applications
+     * to operate in the background  starting in Android 14 and is granted by Telecom via a request
+     * to the ActivityManager.
+     *
+     * @param handle of the voip app that is being checked
+     * @return true if the app has foreground service delegation. Otherwise, false.
+     *
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_VOIP_CALL_MONITOR_REFACTOR)
+    @TestApi
+    public boolean hasForegroundServiceDelegation(@Nullable PhoneAccountHandle handle) {
+        ITelecomService service = getTelecomService();
+        if (service != null) {
+            try {
+                return service.hasForegroundServiceDelegation(handle, mContext.getOpPackageName());
+            } catch (RemoteException e) {
+                Log.e(TAG,
+                        "RemoteException calling ITelecomService#hasForegroundServiceDelegation.",
+                        e);
+            }
+        }
+        return false;
     }
 
     /**

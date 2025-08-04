@@ -14,11 +14,23 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-04-01: Android_UI: SystemUI: Readapt the customization signal strength icon
+/*
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+// QTI_END: 2023-04-01: Android_UI: SystemUI: Readapt the customization signal strength icon
+// QTI_BEGIN: 2024-05-21: Android_UI: SystemUI: Add 6Rx icons support for NrIcons
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+// QTI_END: 2024-05-21: Android_UI: SystemUI: Add 6Rx icons support for NrIcons
+// QTI_BEGIN: 2023-04-01: Android_UI: SystemUI: Readapt the customization signal strength icon
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-04-01: Android_UI: SystemUI: Readapt the customization signal strength icon
 package com.android.systemui.statusbar.pipeline.mobile.data.repository.prod
 
 import android.util.IndentingPrintWriter
 import androidx.annotation.VisibleForTesting
-import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.TableLogBufferFactory
 import com.android.systemui.log.table.logDiffsForTable
@@ -28,7 +40,6 @@ import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConn
 import java.io.PrintWriter
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -46,7 +57,6 @@ import kotlinx.coroutines.flow.stateIn
  * carrier merged (see [setIsCarrierMerged]).
  */
 @Suppress("EXPERIMENTAL_IS_NOT_ENABLED")
-@OptIn(ExperimentalCoroutinesApi::class)
 class FullMobileConnectionRepository(
     override val subId: Int,
     startingIsCarrierMerged: Boolean,
@@ -54,9 +64,12 @@ class FullMobileConnectionRepository(
     subscriptionModel: Flow<SubscriptionModel?>,
     private val defaultNetworkName: NetworkNameModel,
     private val networkNameSeparator: String,
-    @Application scope: CoroutineScope,
+    @Background scope: CoroutineScope,
     private val mobileRepoFactory: MobileConnectionRepositoryImpl.Factory,
     private val carrierMergedRepoFactory: CarrierMergedConnectionRepository.Factory,
+// QTI_BEGIN: 2024-04-17: Android_UI: SystemUI: Fix ImsStateCallback registration failure issue
+    slotIndexForSubId:  Flow<Int>? = null,
+// QTI_END: 2024-04-17: Android_UI: SystemUI: Fix ImsStateCallback registration failure issue
 ) : MobileConnectionRepository {
     /**
      * Sets whether this connection is a typical mobile connection or a carrier merged connection.
@@ -75,7 +88,6 @@ class FullMobileConnectionRepository(
         _isCarrierMerged
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = "isCarrierMerged",
                 initialValue = startingIsCarrierMerged,
             )
@@ -88,6 +100,9 @@ class FullMobileConnectionRepository(
             subscriptionModel,
             defaultNetworkName,
             networkNameSeparator,
+// QTI_BEGIN: 2024-04-17: Android_UI: SystemUI: Fix ImsStateCallback registration failure issue
+            slotIndexForSubId,
+// QTI_END: 2024-04-17: Android_UI: SystemUI: Fix ImsStateCallback registration failure issue
         )
     }
 
@@ -130,9 +145,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.isEmergencyOnly }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_EMERGENCY,
-                activeRepo.value.isEmergencyOnly.value,
+                initialValue = activeRepo.value.isEmergencyOnly.value,
             )
             .stateIn(
                 scope,
@@ -145,9 +159,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.isRoaming }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_ROAMING,
-                activeRepo.value.isRoaming.value,
+                initialValue = activeRepo.value.isRoaming.value,
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.isRoaming.value)
 
@@ -156,9 +169,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.operatorAlphaShort }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_OPERATOR,
-                activeRepo.value.operatorAlphaShort.value,
+                initialValue = activeRepo.value.operatorAlphaShort.value,
             )
             .stateIn(
                 scope,
@@ -171,9 +183,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.isInService }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_IS_IN_SERVICE,
-                activeRepo.value.isInService.value,
+                initialValue = activeRepo.value.isInService.value,
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.isInService.value)
 
@@ -182,9 +193,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.isNonTerrestrial }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_IS_NTN,
-                activeRepo.value.isNonTerrestrial.value,
+                initialValue = activeRepo.value.isNonTerrestrial.value,
             )
             .stateIn(
                 scope,
@@ -197,9 +207,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.isGsm }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_IS_GSM,
-                activeRepo.value.isGsm.value,
+                initialValue = activeRepo.value.isGsm.value,
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.isGsm.value)
 
@@ -208,9 +217,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.cdmaLevel }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_CDMA_LEVEL,
-                activeRepo.value.cdmaLevel.value,
+                initialValue = activeRepo.value.cdmaLevel.value,
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.cdmaLevel.value)
 
@@ -219,9 +227,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.primaryLevel }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_PRIMARY_LEVEL,
-                activeRepo.value.primaryLevel.value,
+                initialValue = activeRepo.value.primaryLevel.value,
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.primaryLevel.value)
 
@@ -230,9 +237,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.satelliteLevel }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_SATELLITE_LEVEL,
-                activeRepo.value.satelliteLevel.value,
+                initialValue = activeRepo.value.satelliteLevel.value,
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.satelliteLevel.value)
 
@@ -241,8 +247,7 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.dataConnectionState }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
-                activeRepo.value.dataConnectionState.value,
+                initialValue = activeRepo.value.dataConnectionState.value,
             )
             .stateIn(
                 scope,
@@ -255,8 +260,7 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.dataActivityDirection }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
-                activeRepo.value.dataActivityDirection.value,
+                initialValue = activeRepo.value.dataActivityDirection.value,
             )
             .stateIn(
                 scope,
@@ -269,9 +273,8 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.carrierNetworkChangeActive }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = COL_CARRIER_NETWORK_CHANGE,
-                activeRepo.value.carrierNetworkChangeActive.value,
+                initialValue = activeRepo.value.carrierNetworkChangeActive.value,
             )
             .stateIn(
                 scope,
@@ -284,8 +287,7 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.resolvedNetworkType }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
-                activeRepo.value.resolvedNetworkType.value,
+                initialValue = activeRepo.value.resolvedNetworkType.value,
             )
             .stateIn(
                 scope,
@@ -298,7 +300,6 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.dataEnabled }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = "dataEnabled",
                 initialValue = activeRepo.value.dataEnabled.value,
             )
@@ -309,7 +310,6 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.inflateSignalStrength }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = "inflate",
                 initialValue = activeRepo.value.inflateSignalStrength.value,
             )
@@ -324,7 +324,6 @@ class FullMobileConnectionRepository(
             .flatMapLatest { it.allowNetworkSliceIndicator }
             .logDiffsForTable(
                 tableLogBuffer,
-                columnPrefix = "",
                 columnName = "allowSlice",
                 initialValue = activeRepo.value.allowNetworkSliceIndicator.value,
             )
@@ -359,6 +358,198 @@ class FullMobileConnectionRepository(
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.carrierName.value)
 
+// QTI_BEGIN: 2023-04-01: Android_UI: SystemUI: Readapt the customization signal strength icon
+    override val lteRsrpLevel =
+        activeRepo
+            .flatMapLatest { it.lteRsrpLevel }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "lteRsrpLevel",
+                initialValue = activeRepo.value.lteRsrpLevel.value,
+            )
+            .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.lteRsrpLevel.value)
+
+    override val voiceNetworkType =
+        activeRepo
+            .flatMapLatest { it.voiceNetworkType }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "voiceNetworkType",
+                initialValue = activeRepo.value.voiceNetworkType.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.voiceNetworkType.value
+            )
+
+    override val dataNetworkType =
+        activeRepo
+            .flatMapLatest { it.dataNetworkType }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "dataNetworkType",
+                initialValue = activeRepo.value.dataNetworkType.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.dataNetworkType.value
+            )
+
+// QTI_END: 2023-04-01: Android_UI: SystemUI: Readapt the customization signal strength icon
+// QTI_BEGIN: 2023-04-01: Android_UI: SystemUI: Readapt the side car 5G icon
+    override val nrIconType =
+        activeRepo.flatMapLatest { it.nrIconType }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "nrIconType",
+                initialValue = activeRepo.value.nrIconType.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.nrIconType.value
+            )
+
+// QTI_END: 2023-04-01: Android_UI: SystemUI: Readapt the side car 5G icon
+// QTI_BEGIN: 2024-05-21: Android_UI: SystemUI: Add 6Rx icons support for NrIcons
+    override val is6Rx =
+        activeRepo.flatMapLatest { it.is6Rx }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "is6Rx",
+                initialValue = activeRepo.value.is6Rx.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.is6Rx.value
+            )
+
+// QTI_END: 2024-05-21: Android_UI: SystemUI: Add 6Rx icons support for NrIcons
+// QTI_BEGIN: 2023-04-01: Android_UI: SystemUI: Readapt network type icon customization
+    override val dataRoamingEnabled =
+        activeRepo
+            .flatMapLatest { it.dataRoamingEnabled }
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.dataRoamingEnabled.value
+            )
+
+// QTI_END: 2023-04-01: Android_UI: SystemUI: Readapt network type icon customization
+// QTI_BEGIN: 2023-04-01: Android_UI: SystemUI: Readapt the Volte HD icon
+    override val originNetworkType =
+        activeRepo.flatMapLatest { it.originNetworkType }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "originNetworkType",
+                initialValue = activeRepo.value.originNetworkType.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.originNetworkType.value
+            )
+
+    override val voiceCapable =
+        activeRepo.flatMapLatest { it.voiceCapable }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "voiceCapable",
+                initialValue = activeRepo.value.voiceCapable.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.voiceCapable.value
+            )
+
+    override val videoCapable =
+        activeRepo.flatMapLatest { it.videoCapable }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "videoCapable",
+                initialValue = activeRepo.value.videoCapable.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.videoCapable.value
+            )
+
+    override val imsRegistered =
+        activeRepo.flatMapLatest { it.imsRegistered }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "imsRegistered",
+                initialValue = activeRepo.value.imsRegistered.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.imsRegistered.value
+            )
+
+// QTI_END: 2023-04-01: Android_UI: SystemUI: Readapt the Volte HD icon
+// QTI_BEGIN: 2023-04-01: Android_UI: SystemUI: Readapt VoWifi icon
+    override val imsRegistrationTech =
+        activeRepo.flatMapLatest { it.imsRegistrationTech }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "imsRegistrationTech",
+                initialValue = activeRepo.value.imsRegistrationTech.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.imsRegistrationTech.value
+            )
+
+// QTI_END: 2023-04-01: Android_UI: SystemUI: Readapt VoWifi icon
+// QTI_BEGIN: 2023-06-26: Telephony: Separate exclamation mark display for mobile network
+    override val isConnectionFailed =
+        activeRepo.flatMapLatest { it.isConnectionFailed }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "isConnectionFailed",
+                initialValue = activeRepo.value.isConnectionFailed.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.isConnectionFailed.value
+            )
+
+// QTI_END: 2023-06-26: Telephony: Separate exclamation mark display for mobile network
+// QTI_BEGIN: 2024-01-30: Android_UI: SystemUI: Implementation for MSIM C_IWLAN feature
+    override val ciwlanAvailable =
+        activeRepo.flatMapLatest { it.ciwlanAvailable }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = "ciwlanAvailable",
+                initialValue = activeRepo.value.ciwlanAvailable.value,
+            )
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.ciwlanAvailable.value
+            )
+
+// QTI_END: 2024-01-30: Android_UI: SystemUI: Implementation for MSIM C_IWLAN feature
     override val isAllowedDuringAirplaneMode =
         activeRepo
             .flatMapLatest { it.isAllowedDuringAirplaneMode }
@@ -403,7 +594,7 @@ class FullMobileConnectionRepository(
     class Factory
     @Inject
     constructor(
-        @Application private val scope: CoroutineScope,
+        @Background private val scope: CoroutineScope,
         private val logFactory: TableLogBufferFactory,
         private val mobileRepoFactory: MobileConnectionRepositoryImpl.Factory,
         private val carrierMergedRepoFactory: CarrierMergedConnectionRepository.Factory,
@@ -414,6 +605,9 @@ class FullMobileConnectionRepository(
             subscriptionModel: Flow<SubscriptionModel?>,
             defaultNetworkName: NetworkNameModel,
             networkNameSeparator: String,
+// QTI_BEGIN: 2024-04-17: Android_UI: SystemUI: Fix ImsStateCallback registration failure issue
+            slotIndexForSubId:  Flow<Int>? = null,
+// QTI_END: 2024-04-17: Android_UI: SystemUI: Fix ImsStateCallback registration failure issue
         ): FullMobileConnectionRepository {
             val mobileLogger =
                 logFactory.getOrCreate(tableBufferLogName(subId), MOBILE_CONNECTION_BUFFER_SIZE)
@@ -428,6 +622,9 @@ class FullMobileConnectionRepository(
                 scope,
                 mobileRepoFactory,
                 carrierMergedRepoFactory,
+// QTI_BEGIN: 2024-04-17: Android_UI: SystemUI: Fix ImsStateCallback registration failure issue
+                slotIndexForSubId,
+// QTI_END: 2024-04-17: Android_UI: SystemUI: Fix ImsStateCallback registration failure issue
             )
         }
 

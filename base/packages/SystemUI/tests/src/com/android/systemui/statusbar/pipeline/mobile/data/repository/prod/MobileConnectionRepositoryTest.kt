@@ -19,7 +19,9 @@ package com.android.systemui.statusbar.pipeline.mobile.data.repository.prod
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+// QTI_BEGIN: 2023-06-26: Telephony: Separate exclamation mark display for mobile network
 import android.net.ConnectivityManager
+// QTI_END: 2023-06-26: Telephony: Separate exclamation mark display for mobile network
 import android.net.ConnectivityManager.NetworkCallback
 import android.platform.test.annotations.DisableFlags
 import android.platform.test.annotations.EnableFlags
@@ -37,7 +39,7 @@ import android.telephony.ServiceState.STATE_OUT_OF_SERVICE
 import android.telephony.SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX
 import android.telephony.SubscriptionManager.PROFILE_CLASS_UNSET
 import android.telephony.TelephonyCallback
-import android.telephony.TelephonyCallback.CarrierRoamingNtnModeListener
+import android.telephony.TelephonyCallback.CarrierRoamingNtnListener
 import android.telephony.TelephonyCallback.DataActivityListener
 import android.telephony.TelephonyCallback.DisplayInfoListener
 import android.telephony.TelephonyCallback.ServiceStateListener
@@ -86,19 +88,26 @@ import com.android.systemui.statusbar.pipeline.mobile.data.model.ResolvedNetwork
 import com.android.systemui.statusbar.pipeline.mobile.data.model.ResolvedNetworkType.UnknownNetworkType
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SystemUiCarrierConfig
-import com.android.systemui.statusbar.pipeline.mobile.data.model.SystemUiCarrierConfigTest.Companion.configWithOverride
-import com.android.systemui.statusbar.pipeline.mobile.data.model.SystemUiCarrierConfigTest.Companion.createTestConfig
+import com.android.systemui.statusbar.pipeline.mobile.data.model.testCarrierConfig
+import com.android.systemui.statusbar.pipeline.mobile.data.model.testCarrierConfigWithOverride
+import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConnectionRepository
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConnectionRepository.Companion.DEFAULT_NUM_LEVELS
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.MobileTelephonyHelpers.signalStrength
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.MobileTelephonyHelpers.telephonyDisplayInfo
 import com.android.systemui.statusbar.pipeline.mobile.util.FakeMobileMappingsProxy
 import com.android.systemui.statusbar.pipeline.shared.data.model.DataActivityModel
 import com.android.systemui.statusbar.pipeline.shared.data.model.toMobileDataActivityModel
+// QTI_BEGIN: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
+import com.android.systemui.statusbar.policy.FiveGServiceClient
+import com.android.systemui.statusbar.policy.FiveGServiceClient.FiveGServiceState
+// QTI_END: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.mockito.withArgCaptor
 import com.google.common.truth.Truth.assertThat
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+// QTI_BEGIN: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
+import com.qti.extphone.NrIconType
+// QTI_END: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -109,38 +118,66 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
+// QTI_BEGIN: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
+import org.mockito.Mockito
+// QTI_END: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 
 @Suppress("EXPERIMENTAL_IS_NOT_ENABLED")
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
-class MobileConnectionRepositoryTest : SysuiTestCase() {
-    private lateinit var underTest: MobileConnectionRepositoryImpl
+class MobileConnectionRepositoryImplTest : MobileConnectionRepositoryTest() {
+    override fun recreateRepo(): MobileConnectionRepository =
+        MobileConnectionRepositoryImpl(
+            SUB_1_ID,
+            context,
+            subscriptionModel,
+            DEFAULT_NAME_MODEL,
+            SEP,
+            connectivityManager,
+            telephonyManager,
+            systemUiCarrierConfig,
+            fakeBroadcastDispatcher,
+            mobileMappings,
+            testDispatcher,
+            logger,
+            tableLogger,
+            flags,
+            testScope.backgroundScope,
+// QTI_BEGIN: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
+	    fiveGServiceClient,
+// QTI_END: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
+        )
+}
 
-    private val flags =
+abstract class MobileConnectionRepositoryTest : SysuiTestCase() {
+
+    abstract fun recreateRepo(): MobileConnectionRepository
+
+    lateinit var underTest: MobileConnectionRepository
+
+    protected val flags =
         FakeFeatureFlagsClassic().also { it.set(ROAMING_INDICATOR_VIA_DISPLAY_INFO, true) }
 
-    @Mock private lateinit var connectivityManager: ConnectivityManager
-    @Mock private lateinit var telephonyManager: TelephonyManager
-    @Mock private lateinit var logger: MobileInputLogger
-    @Mock private lateinit var tableLogger: TableLogBuffer
-    @Mock private lateinit var context: Context
+    @Mock protected lateinit var connectivityManager: ConnectivityManager
+    @Mock protected lateinit var telephonyManager: TelephonyManager
+    @Mock protected lateinit var logger: MobileInputLogger
+    @Mock protected lateinit var tableLogger: TableLogBuffer
+    @Mock protected lateinit var context: Context
 
-    private val mobileMappings = FakeMobileMappingsProxy()
-    private val systemUiCarrierConfig =
-        SystemUiCarrierConfig(
-            SUB_1_ID,
-            createTestConfig(),
-        )
+    protected val mobileMappings = FakeMobileMappingsProxy()
+    protected val systemUiCarrierConfig = SystemUiCarrierConfig(SUB_1_ID, testCarrierConfig())
+// QTI_BEGIN: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
+    protected val fiveGServiceClient = FiveGServiceClient(mContext)
+// QTI_END: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
 
-    private val testDispatcher = UnconfinedTestDispatcher()
-    private val testScope = TestScope(testDispatcher)
+    protected val testDispatcher = UnconfinedTestDispatcher()
+    protected val testScope = TestScope(testDispatcher)
 
-    private val subscriptionModel: MutableStateFlow<SubscriptionModel?> =
+    protected val subscriptionModel: MutableStateFlow<SubscriptionModel?> =
         MutableStateFlow(
             SubscriptionModel(
                 subscriptionId = SUB_1_ID,
@@ -150,28 +187,11 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
         )
 
     @Before
-    fun setUp() {
+    fun setUpBase() {
         MockitoAnnotations.initMocks(this)
         whenever(telephonyManager.subscriptionId).thenReturn(SUB_1_ID)
 
-        underTest =
-            MobileConnectionRepositoryImpl(
-                SUB_1_ID,
-                context,
-                subscriptionModel,
-                DEFAULT_NAME_MODEL,
-                SEP,
-                connectivityManager,
-                telephonyManager,
-                systemUiCarrierConfig,
-                fakeBroadcastDispatcher,
-                mobileMappings,
-                testDispatcher,
-                logger,
-                tableLogger,
-                flags,
-                testScope.backgroundScope,
-            )
+	underTest = recreateRepo()
     }
 
     @Test
@@ -406,6 +426,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
     fun carrierId_initialValueCaptured() =
         testScope.runTest {
             whenever(telephonyManager.simCarrierId).thenReturn(1234)
+            underTest = recreateRepo()
 
             var latest: Int? = null
             val job = underTest.carrierId.onEach { latest = it }.launchIn(this)
@@ -436,6 +457,8 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
     @Test
     fun carrierNetworkChange() =
         testScope.runTest {
+            underTest = recreateRepo()
+
             var latest: Boolean? = null
             val job = underTest.carrierNetworkChangeActive.onEach { latest = it }.launchIn(this)
 
@@ -628,24 +651,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
             flags.set(ROAMING_INDICATOR_VIA_DISPLAY_INFO, true)
 
             // Re-create the repository, because the flag is read at init
-            underTest =
-                MobileConnectionRepositoryImpl(
-                    SUB_1_ID,
-                    context,
-                    subscriptionModel,
-                    DEFAULT_NAME_MODEL,
-                    SEP,
-                    connectivityManager,
-                    telephonyManager,
-                    systemUiCarrierConfig,
-                    fakeBroadcastDispatcher,
-                    mobileMappings,
-                    testDispatcher,
-                    logger,
-                    tableLogger,
-                    flags,
-                    testScope.backgroundScope,
-                )
+	    underTest = recreateRepo()
 
             var latest: Boolean? = null
             val job = underTest.isRoaming.onEach { latest = it }.launchIn(this)
@@ -677,24 +683,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
             flags.set(ROAMING_INDICATOR_VIA_DISPLAY_INFO, false)
 
             // Re-create the repository, because the flag is read at init
-            underTest =
-                MobileConnectionRepositoryImpl(
-                    SUB_1_ID,
-                    context,
-                    subscriptionModel,
-                    DEFAULT_NAME_MODEL,
-                    SEP,
-                    connectivityManager,
-                    telephonyManager,
-                    systemUiCarrierConfig,
-                    fakeBroadcastDispatcher,
-                    mobileMappings,
-                    testDispatcher,
-                    logger,
-                    tableLogger,
-                    flags,
-                    testScope.backgroundScope,
-                )
+	    underTest = recreateRepo()
 
             var latest: Boolean? = null
             val job = underTest.isRoaming.onEach { latest = it }.launchIn(this)
@@ -904,11 +893,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
 
             assertThat(latest).isEqualTo(NetworkNameModel.IntentDerived("$PLMN$SEP$DATA_SPN"))
 
-            val intentWithoutInfo =
-                spnIntent(
-                    showSpn = false,
-                    showPlmn = false,
-                )
+            val intentWithoutInfo = spnIntent(showSpn = false, showPlmn = false)
 
             captor.lastValue.onReceive(context, intentWithoutInfo)
 
@@ -931,11 +916,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
 
             assertThat(latest).isEqualTo(NetworkNameModel.IntentDerived("$PLMN$SEP$DATA_SPN"))
 
-            val intentWithoutInfo =
-                spnIntent(
-                    showSpn = false,
-                    showPlmn = false,
-                )
+            val intentWithoutInfo = spnIntent(showSpn = false, showPlmn = false)
 
             captor.lastValue.onReceive(context, intentWithoutInfo)
 
@@ -1303,7 +1284,6 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
         }
 
     @Test
-    @EnableFlags(com.android.internal.telephony.flags.Flags.FLAG_CARRIER_ENABLED_SATELLITE_FLAG)
     fun isNonTerrestrial_updatesFromCallback0() =
         testScope.runTest {
             val latest by collectLastValue(underTest.isNonTerrestrial)
@@ -1311,7 +1291,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
             // Starts out false
             assertThat(latest).isFalse()
 
-            val callback = getTelephonyCallbackForType<CarrierRoamingNtnModeListener>()
+            val callback = getTelephonyCallbackForType<CarrierRoamingNtnListener>()
 
             callback.onCarrierRoamingNtnModeChanged(true)
             assertThat(latest).isTrue()
@@ -1329,13 +1309,13 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
             assertThat(latest).isEqualTo(DEFAULT_NUM_LEVELS)
 
             systemUiCarrierConfig.processNewCarrierConfig(
-                configWithOverride(KEY_INFLATE_SIGNAL_STRENGTH_BOOL, true)
+                testCarrierConfigWithOverride(KEY_INFLATE_SIGNAL_STRENGTH_BOOL, true)
             )
 
             assertThat(latest).isEqualTo(DEFAULT_NUM_LEVELS + 1)
 
             systemUiCarrierConfig.processNewCarrierConfig(
-                configWithOverride(KEY_INFLATE_SIGNAL_STRENGTH_BOOL, false)
+                testCarrierConfigWithOverride(KEY_INFLATE_SIGNAL_STRENGTH_BOOL, false)
             )
 
             assertThat(latest).isEqualTo(DEFAULT_NUM_LEVELS)
@@ -1351,13 +1331,13 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
             assertThat(latest).isEqualTo(false)
 
             systemUiCarrierConfig.processNewCarrierConfig(
-                configWithOverride(KEY_INFLATE_SIGNAL_STRENGTH_BOOL, true)
+                testCarrierConfigWithOverride(KEY_INFLATE_SIGNAL_STRENGTH_BOOL, true)
             )
 
             assertThat(latest).isEqualTo(true)
 
             systemUiCarrierConfig.processNewCarrierConfig(
-                configWithOverride(KEY_INFLATE_SIGNAL_STRENGTH_BOOL, false)
+                testCarrierConfigWithOverride(KEY_INFLATE_SIGNAL_STRENGTH_BOOL, false)
             )
 
             assertThat(latest).isEqualTo(false)
@@ -1369,13 +1349,13 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
             val latest by collectLastValue(underTest.allowNetworkSliceIndicator)
 
             systemUiCarrierConfig.processNewCarrierConfig(
-                configWithOverride(KEY_SHOW_5G_SLICE_ICON_BOOL, true)
+                testCarrierConfigWithOverride(KEY_SHOW_5G_SLICE_ICON_BOOL, true)
             )
 
             assertThat(latest).isTrue()
 
             systemUiCarrierConfig.processNewCarrierConfig(
-                configWithOverride(KEY_SHOW_5G_SLICE_ICON_BOOL, false)
+                testCarrierConfigWithOverride(KEY_SHOW_5G_SLICE_ICON_BOOL, false)
             )
 
             assertThat(latest).isFalse()
@@ -1432,10 +1412,7 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
         return MobileTelephonyHelpers.getTelephonyCallbackForType(telephonyManager)
     }
 
-    private fun carrierIdIntent(
-        subId: Int = SUB_1_ID,
-        carrierId: Int,
-    ): Intent =
+    private fun carrierIdIntent(subId: Int = SUB_1_ID, carrierId: Int): Intent =
         Intent(TelephonyManager.ACTION_SUBSCRIPTION_CARRIER_IDENTITY_CHANGED).apply {
             putExtra(EXTRA_SUBSCRIPTION_ID, subId)
             putExtra(EXTRA_CARRIER_ID, carrierId)
@@ -1459,14 +1436,14 @@ class MobileConnectionRepositoryTest : SysuiTestCase() {
         }
 
     companion object {
-        private const val SUB_1_ID = 1
+        const val SUB_1_ID = 1
 
-        private const val DEFAULT_NAME = "Fake Mobile Network"
-        private val DEFAULT_NAME_MODEL = NetworkNameModel.Default(DEFAULT_NAME)
-        private const val SEP = "-"
+        const val DEFAULT_NAME = "Fake Mobile Network"
+        val DEFAULT_NAME_MODEL = NetworkNameModel.Default(DEFAULT_NAME)
+        const val SEP = "-"
 
-        private const val SPN = "testSpn"
-        private const val DATA_SPN = "testDataSpn"
-        private const val PLMN = "testPlmn"
+        const val SPN = "testSpn"
+        const val DATA_SPN = "testDataSpn"
+        const val PLMN = "testPlmn"
     }
 }

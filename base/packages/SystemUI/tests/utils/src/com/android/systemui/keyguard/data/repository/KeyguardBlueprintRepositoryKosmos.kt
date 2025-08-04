@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2025-02-09: Android_UI: SystemUI: Refactor Emergency button on keyguard
+/*
+ * Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
+ * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2025-02-09: Android_UI: SystemUI: Refactor Emergency button on keyguard
 package com.android.systemui.keyguard.data.repository
 
 import android.content.applicationContext
@@ -29,6 +37,7 @@ import com.android.systemui.keyguard.ui.viewmodel.keyguardClockViewModel
 import com.android.systemui.keyguard.ui.viewmodel.keyguardRootViewModel
 import com.android.systemui.keyguard.ui.viewmodel.keyguardSmartspaceViewModel
 import com.android.systemui.kosmos.Kosmos
+import com.android.systemui.log.logcatLogBuffer
 import com.android.systemui.shade.LargeScreenHeaderHelper
 import java.util.Optional
 import org.mockito.Mockito.spy
@@ -59,17 +68,19 @@ val Kosmos.defaultKeyguardBlueprint by
             defaultShortcutsSection = mock(),
             defaultAmbientIndicationAreaSection = Optional.of(mock()),
             defaultSettingsPopupMenuSection = mock(),
-            defaultStatusViewSection = mock(),
             defaultStatusBarSection = mock(),
             defaultNotificationStackScrollLayoutSection = mock(),
+            aodPromotedNotificationSection = mock(),
             aodNotificationIconsSection = mock(),
             aodBurnInSection = mock(),
-            communalTutorialIndicatorSection = mock(),
             clockSection = keyguardClockSection,
             smartspaceSection = keyguardSmartspaceSection,
             keyguardSliceViewSection = mock(),
             udfpsAccessibilityOverlaySection = mock(),
             accessibilityActionsSection = mock(),
+// QTI_BEGIN: 2025-02-09: Android_UI: SystemUI: Refactor Emergency button on keyguard
+            defaultEmergencyButtonSection = mock(),
+// QTI_END: 2025-02-09: Android_UI: SystemUI: Refactor Emergency button on keyguard
         )
     }
 
@@ -81,13 +92,12 @@ val Kosmos.splitShadeBlueprint by
             defaultShortcutsSection = mock(),
             defaultAmbientIndicationAreaSection = Optional.of(mock()),
             defaultSettingsPopupMenuSection = mock(),
-            defaultStatusViewSection = mock(),
             defaultStatusBarSection = mock(),
             splitShadeNotificationStackScrollLayoutSection = mock(),
             splitShadeGuidelines = mock(),
+            aodPromotedNotificationSection = mock(),
             aodNotificationIconsSection = mock(),
             aodBurnInSection = mock(),
-            communalTutorialIndicatorSection = mock(),
             clockSection = keyguardClockSection,
             smartspaceSection = keyguardSmartspaceSection,
             mediaSection = mock(),
@@ -102,6 +112,7 @@ val Kosmos.keyguardBlueprintRepository by
                 blueprints = setOf(defaultKeyguardBlueprint, splitShadeBlueprint),
                 handler = fakeExecutorHandler,
                 assert = mock(),
+                log = logcatLogBuffer("blueprints"),
             )
         )
     }

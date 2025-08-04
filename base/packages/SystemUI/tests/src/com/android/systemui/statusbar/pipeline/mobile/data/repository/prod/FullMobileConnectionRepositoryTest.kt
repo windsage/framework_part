@@ -42,6 +42,9 @@ import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.FullM
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.MobileTelephonyHelpers.getTelephonyCallbackForType
 import com.android.systemui.statusbar.pipeline.wifi.data.repository.FakeWifiRepository
 import com.android.systemui.statusbar.pipeline.wifi.shared.model.WifiNetworkModel
+// QTI_BEGIN: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
+import com.android.systemui.statusbar.policy.FiveGServiceClient
+// QTI_END: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
 import com.android.systemui.testKosmos
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.eq
@@ -50,7 +53,6 @@ import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
 import java.io.PrintWriter
 import java.io.StringWriter
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -69,7 +71,6 @@ import org.mockito.Mockito.verify
  * properly switches over when the value of `isCarrierMerged` changes.
  */
 @Suppress("EXPERIMENTAL_IS_NOT_ENABLED")
-@OptIn(ExperimentalCoroutinesApi::class)
 @SmallTest
 @RunWith(AndroidJUnit4::class)
 class FullMobileConnectionRepositoryTest : SysuiTestCase() {
@@ -656,7 +657,7 @@ class FullMobileConnectionRepositoryTest : SysuiTestCase() {
         val realRepo =
             MobileConnectionRepositoryImpl(
                 SUB_ID,
-                context,
+                mContext,
                 subscriptionModel,
                 DEFAULT_NAME_MODEL,
                 SEP,
@@ -670,6 +671,9 @@ class FullMobileConnectionRepositoryTest : SysuiTestCase() {
                 tableLogBuffer,
                 flags,
                 testScope.backgroundScope,
+// QTI_BEGIN: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
+                FiveGServiceClient(mContext),
+// QTI_END: 2023-03-02: Android_UI: SystemUI: Support side car 5G icon
             )
         whenever(
                 mobileFactory.build(

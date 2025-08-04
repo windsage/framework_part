@@ -14,8 +14,20 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
+/**
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
 package com.android.systemui.statusbar.pipeline.mobile.ui
 
+// QTI_BEGIN: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
+import android.telephony.TelephonyManager
+// QTI_END: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
+import com.android.app.tracing.coroutines.launchTraced as launch
 import com.android.systemui.CoreStartable
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
@@ -27,7 +39,7 @@ import java.io.PrintWriter
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collectLatest
-import com.android.app.tracing.coroutines.launchTraced as launch
+import kotlinx.coroutines.flow.combine
 
 /**
  * This class is intended to provide a context to collect on the
@@ -46,9 +58,15 @@ constructor(
     val mobileIconsViewModel: MobileIconsViewModel,
     private val logger: MobileViewLogger,
     @Application private val scope: CoroutineScope,
+// QTI_BEGIN: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
+    private val telephonyManager: TelephonyManager,
+// QTI_END: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
 ) : CoreStartable {
     private var isCollecting: Boolean = false
     private var lastValue: List<Int>? = null
+// QTI_BEGIN: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
+    private var isMultiSimEnabled: Boolean = telephonyManager.isMultiSimEnabled()
+// QTI_END: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
 
     private var shadeCarrierGroupController: ShadeCarrierGroupController? = null
 
@@ -56,12 +74,23 @@ constructor(
         // Start notifying the icon controller of subscriptions
         scope.launch {
             isCollecting = true
-            mobileIconsViewModel.subscriptionIdsFlow.collectLatest {
-                logger.logUiAdapterSubIdsSentToIconController(it)
-                lastValue = it
-                iconController.setNewMobileIconSubIds(it)
-                shadeCarrierGroupController?.updateModernMobileIcons(it)
-            }
+            combine(
+                    mobileIconsViewModel.subscriptionIdsFlow,
+                    mobileIconsViewModel.isStackable,
+                    ::Pair,
+                )
+                .collectLatest { (subIds, isStackable) ->
+                    logger.logUiAdapterSubIdsSentToIconController(subIds, isStackable)
+                    lastValue = subIds
+                    if (isStackable) {
+                        // Passing an empty list to remove pre-existing mobile icons.
+                        // StackedMobileBindableIcon will show the stacked icon instead.
+                        iconController.setNewMobileIconSubIds(emptyList())
+                    } else {
+                        iconController.setNewMobileIconSubIds(subIds)
+                    }
+                    shadeCarrierGroupController?.updateModernMobileIcons(subIds)
+                }
         }
     }
 
@@ -74,4 +103,10 @@ constructor(
         pw.println("isCollecting=$isCollecting")
         pw.println("Last values sent to icon controller: $lastValue")
     }
+// QTI_BEGIN: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
+
+    private fun isMultiSimConfigChanged(): Boolean {
+        return isMultiSimEnabled != telephonyManager.isMultiSimEnabled()
+    }
+// QTI_END: 2023-03-15: Android_UI: SystemUI: Reset the mobile icons when the subscription is changed
 }

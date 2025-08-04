@@ -103,10 +103,10 @@ filegroup {
         ":android.hardware.gnss-V2-java-source",
         ":android.hardware.graphics.common-V3-java-source",
         ":android.hardware.keymaster-V4-java-source",
-        ":android.hardware.radio-V4-java-source",
-        ":android.hardware.radio.data-V4-java-source",
-        ":android.hardware.radio.network-V4-java-source",
-        ":android.hardware.radio.voice-V4-java-source",
+        ":android.hardware.radio-V5-java-source",
+        ":android.hardware.radio.data-V5-java-source",
+        ":android.hardware.radio.network-V5-java-source",
+        ":android.hardware.radio.voice-V5-java-source",
         ":android.hardware.security.secureclock-V1-java-source",
         ":android.hardware.thermal-V3-java-source",
         ":android.hardware.tv.tuner-V3-java-source",
@@ -141,6 +141,11 @@ filegroup {
 
         // For the generated R.java and Manifest.java
         ":framework-res{.aapt.srcjar}",
+        //T-HUB Core [SDD]: add decoupling framework by lijia.chen 20220506 start
+        //":thub-res{.aapt.srcjar}",
+        ":framework-thub-sources",
+        ":framework-thub-aidl-sources",
+        //T-HUB Core [SDD]: add decoupling framework by lijia.chen 20220506 end
 
         // etc.
         ":framework-javastream-protos",
@@ -232,13 +237,13 @@ java_library {
         "android.hardware.gnss-V2.1-java",
         "android.hardware.health-V1.0-java-constants",
         "android.hardware.radio-V1.6-java",
-        "android.hardware.radio.data-V4-java",
-        "android.hardware.radio.ims-V3-java",
-        "android.hardware.radio.messaging-V4-java",
-        "android.hardware.radio.modem-V4-java",
-        "android.hardware.radio.network-V4-java",
-        "android.hardware.radio.sim-V4-java",
-        "android.hardware.radio.voice-V4-java",
+        "android.hardware.radio.data-V5-java",
+        "android.hardware.radio.ims-V4-java",
+        "android.hardware.radio.messaging-V5-java",
+        "android.hardware.radio.modem-V5-java",
+        "android.hardware.radio.network-V5-java",
+        "android.hardware.radio.sim-V5-java",
+        "android.hardware.radio.voice-V5-java",
         "android.hardware.thermal-V1.0-java-constants",
         "android.hardware.thermal-V1.0-java",
         "android.hardware.thermal-V1.1-java",
@@ -263,6 +268,14 @@ java_library {
 
         "com.android.sysprop.localization",
         "PlatformProperties",
+        //T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20230420 start
+        "vendor.transsion.hardware.tranlog-V1.0-java",
+        "vendor.transsion.hardware.tranlogconfig-V1.0-java",
+        "vendor.transsion.hardware.trandatacenter-V1.0-java",
+        "vendor.transsion.hardware.tranlog-V1-java",
+        "vendor.transsion.hardware.tranlogconfig-V1-java",
+        "vendor.transsion.hardware.trandatacenter-V1-java",
+        //T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20230420 end
     ],
     sdk_version: "core_platform",
     installable: false,
@@ -276,6 +289,15 @@ filegroup {
     visibility: ["//visibility:public"],
 }
 
+// QTI_BEGIN: 2021-03-11: Bluetooth: BT fwk: Changes to compile only when bt_adv_audio present
+soong_config_module_type_import {
+    from: "device/qcom/qssi/Android.bp",
+    module_types: [
+         "bredr_vs_btadva_java_defaults",
+    ],
+}
+
+// QTI_END: 2021-03-11: Bluetooth: BT fwk: Changes to compile only when bt_adv_audio present
 java_defaults {
     name: "framework-minus-apex-defaults",
     defaults: [
@@ -340,6 +362,9 @@ java_defaults {
             ":storaged_aidl",
             ":vold_aidl",
             ":deviceproductinfoconstants_aidl",
+            //T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20230523 start
+            ":framework-thub-aidl-sources",
+            //T-HUB Core [SDD]: add decoupling framework by jiangping.guo 20230523 end
         ],
         local_include_dirs: [
             "media/aidl",
@@ -347,7 +372,9 @@ java_defaults {
         include_dirs: [
             "frameworks/av/aidl",
             "frameworks/native/libs/permission/aidl",
+// QTI_BEGIN: 2023-10-19: Bluetooth: Enable AOSP BT APEX
             "packages/modules/Bluetooth/framework/aidl-export",
+// QTI_END: 2023-10-19: Bluetooth: Enable AOSP BT APEX
             "packages/modules/Connectivity/framework/aidl-export",
             "packages/modules/Media/apex/aidl/stable",
             "hardware/interfaces/biometrics/common/aidl",
@@ -408,7 +435,6 @@ java_defaults {
         "bouncycastle-repackaged-unbundled",
         "com.android.sysprop.foldlockbehavior",
         "com.android.sysprop.view",
-        "configinfra_framework_flags_java_lib",
         "framework-internal-utils",
         "dynamic_instrumentation_manager_aidl-java",
         // If MimeMap ever becomes its own APEX, then this dependency would need to be removed
@@ -416,6 +442,7 @@ java_defaults {
         "mimemap",
         "av-types-aidl-java",
         "tv_tuner_resource_manager_aidl_interface-java",
+        "media_quality_aidl_interface-java",
         "soundtrigger_middleware-aidl-java",
         "modules-utils-binary-xml",
         "modules-utils-build",
@@ -427,6 +454,7 @@ java_defaults {
         "framework-permission-aidl-java",
         "spatializer-aidl-java",
         "audiopolicy-aidl-java",
+        "volumegroupcallback-aidl-java",
         "sounddose-aidl-java",
         "modules-utils-expresslog",
         "perfetto_trace_javastream_protos_jarjar",
@@ -584,6 +612,7 @@ java_library {
         "documents-ui-compat-config",
         "calendar-provider-compat-config",
         "contacts-provider-platform-compat-config",
+        "SystemUI-core-compat-config",
     ] + select(soong_config_variable("ANDROID", "release_crashrecovery_module"), {
         "true": [],
         default: [

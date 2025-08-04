@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 #include <SurfaceFlingerProperties.sysprop.h>
 #include <android-base/stringprintf.h>
 #include <common/FlagManager.h>
@@ -49,7 +57,6 @@
 
 #include <renderengine/DisplaySettings.h>
 #include <renderengine/RenderEngine.h>
-
 // TODO(b/129481165): remove the #pragma below and fix conversion issues
 #pragma clang diagnostic pop // ignored "-Wconversion"
 
@@ -59,6 +66,11 @@
 
 #include "TracedOrdinal.h"
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+#include "../QtiExtension/QtiOutputExtension.h"
+using android::compositionengineextension::QtiOutputExtension;
+
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
 using aidl::android::hardware::graphics::composer3::Composition;
 
 namespace android::compositionengine {
@@ -107,6 +119,11 @@ std::shared_ptr<Output> createOutput(
     return createOutputTemplated<Output>(compositionEngine);
 }
 
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+Output::Output() {
+}
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
 Output::~Output() = default;
 
 bool Output::isValid() const {
@@ -115,6 +132,10 @@ bool Output::isValid() const {
 }
 
 ftl::Optional<DisplayId> Output::getDisplayId() const {
+    return {};
+}
+
+ftl::Optional<DisplayIdVariant> Output::getDisplayIdVariant() const {
     return {};
 }
 
@@ -436,8 +457,8 @@ void Output::prepare(const compositionengine::CompositionRefreshArgs& refreshArg
 ftl::Future<std::monostate> Output::present(
         const compositionengine::CompositionRefreshArgs& refreshArgs) {
     const auto stringifyExpectedPresentTime = [this, &refreshArgs]() -> std::string {
-        return getDisplayId()
-                .and_then(PhysicalDisplayId::tryCast)
+        return getDisplayIdVariant()
+                .and_then(asPhysicalDisplayId)
                 .and_then([&refreshArgs](PhysicalDisplayId id) {
                     return refreshArgs.frameTargets.get(id);
                 })
@@ -810,7 +831,7 @@ void Output::commitPictureProfilesToCompositionState() {
     }
     auto compare = [](const ::android::compositionengine::OutputLayer* lhs,
                       const ::android::compositionengine::OutputLayer* rhs) {
-        return lhs->getPictureProfilePriority() > rhs->getPictureProfilePriority();
+        return lhs->getPictureProfilePriority() < rhs->getPictureProfilePriority();
     };
     std::priority_queue<::android::compositionengine::OutputLayer*,
                         std::vector<::android::compositionengine::OutputLayer*>, decltype(compare)>
@@ -890,8 +911,8 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
         return;
     }
 
-    if (auto frameTargetPtrOpt = getDisplayId()
-                                         .and_then(PhysicalDisplayId::tryCast)
+    if (auto frameTargetPtrOpt = getDisplayIdVariant()
+                                         .and_then(asPhysicalDisplayId)
                                          .and_then([&refreshArgs](PhysicalDisplayId id) {
                                              return refreshArgs.frameTargets.get(id);
                                          })) {
@@ -908,6 +929,9 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
     editState().powerCallback = refreshArgs.powerCallback;
 
     applyPictureProfile();
+
+    auto* properties = getOverlaySupport();
+    bool hasLutsProperties = properties && properties->lutProperties.has_value();
 
     compositionengine::OutputLayer* peekThroughLayer = nullptr;
     sp<GraphicBuffer> previousOverride = nullptr;
@@ -940,7 +964,7 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
                     includeGeometry = true;
                     constexpr bool isPeekingThrough = true;
                     peekThroughLayer->writeStateToHWC(includeGeometry, false, z++, overrideZ,
-                                                      isPeekingThrough);
+                                                      isPeekingThrough, hasLutsProperties);
                     outputLayerHash ^= android::hashCombine(
                             reinterpret_cast<uint64_t>(&peekThroughLayer->getLayerFE()),
                             z, includeGeometry, overrideZ, isPeekingThrough,
@@ -952,15 +976,26 @@ void Output::writeCompositionState(const compositionengine::CompositionRefreshAr
         }
 
         constexpr bool isPeekingThrough = false;
-        layer->writeStateToHWC(includeGeometry, skipLayer, z++, overrideZ, isPeekingThrough);
+        layer->writeStateToHWC(includeGeometry, skipLayer, z++, overrideZ, isPeekingThrough,
+                               hasLutsProperties);
         if (!skipLayer) {
             outputLayerHash ^= android::hashCombine(
                     reinterpret_cast<uint64_t>(&layer->getLayerFE()),
                     z, includeGeometry, overrideZ, isPeekingThrough,
                     layer->requiresClientComposition());
         }
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+
+        QtiOutputExtension::qtiWriteLayerFlagToHWC(layer->getHwcLayer(), this);
+        // QTI_END
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
     }
     editState().outputLayerHash = outputLayerHash;
+// QTI_BEGIN: 2023-06-15: Display: sf: extensions: Reduce instructions in SmoMo & LayerExt update
+
+    QtiOutputExtension::qtiGetVisibleLayerInfo(this);
+    // QTI_END
+// QTI_END: 2023-06-15: Display: sf: extensions: Reduce instructions in SmoMo & LayerExt update
 }
 
 compositionengine::OutputLayer* Output::findLayerRequestingBackgroundComposition() const {
@@ -1074,12 +1109,23 @@ compositionengine::Output::ColorProfile Output::pickColorProfile(
     }
 
     // respect hdrDataSpace only when there is no legacy HDR support
-    const bool isHdr = hdrDataSpace != ui::Dataspace::UNKNOWN &&
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+    bool isHdr = hdrDataSpace != ui::Dataspace::UNKNOWN &&
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
             !mDisplayColorProfile->hasLegacyHdrSupport(hdrDataSpace) && !isHdrClientComposition;
     if (isHdr) {
         bestDataSpace = hdrDataSpace;
     }
 
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    if (QtiOutputExtension::qtiHasSecureDisplay(this)) {
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
+        bestDataSpace = ui::Dataspace::V0_SRGB;
+        isHdr = false;
+    }
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     ui::RenderIntent intent;
     switch (refreshArgs.outputColorSetting) {
         case OutputColorSetting::kManaged:
@@ -1281,8 +1327,11 @@ void Output::finishFrame(GpuCompositionResult&& result) {
 void Output::updateProtectedContentState() {
     const auto& outputState = getState();
     auto& renderEngine = getCompositionEngine().getRenderEngine();
-    const bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+// QTI_BEGIN: 2023-01-24: Display: sf: Add support for multiple displays
 
+    bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+
+// QTI_END: 2023-01-24: Display: sf: Add support for multiple displays
     bool isProtected;
     if (FlagManager::getInstance().display_protected()) {
         isProtected = outputState.isProtected;
@@ -1301,6 +1350,10 @@ void Output::updateProtectedContentState() {
                     (!FlagManager::getInstance().protected_if_client() ||
                      layer->requiresClientComposition());
         });
+// QTI_BEGIN: 2023-04-28: Display: sf: Fix secure to nonsecure transitions
+
+        needsProtected = needsProtected && QtiOutputExtension::qtiIsProtectedContent(this);
+// QTI_END: 2023-04-28: Display: sf: Fix secure to nonsecure transitions
         if (needsProtected != mRenderSurface->isProtected()) {
             mRenderSurface->setProtected(needsProtected);
         }
@@ -1355,7 +1408,11 @@ std::optional<base::unique_fd> Output::composeSurfaces(
 
     // Generate the client composition requests for the layers on this output.
     auto& renderEngine = getCompositionEngine().getRenderEngine();
-    const bool supportsProtectedContent = renderEngine.supportsProtectedContent();
+// QTI_BEGIN: 2023-03-28: Display: sf: don't allow secure camera and display to GPU
+    const bool supportsProtectedContent = renderEngine.supportsProtectedContent()
+            && mRenderSurface->isProtected();
+
+// QTI_END: 2023-03-28: Display: sf: don't allow secure camera and display to GPU
     std::vector<LayerFE*> clientCompositionLayersFE;
     std::vector<LayerFE::LayerSettings> clientCompositionLayers =
             generateClientCompositionRequests(supportsProtectedContent,
@@ -1366,7 +1423,13 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     OutputCompositionState& outputCompositionState = editState();
     // Check if the client composition requests were rendered into the provided graphic buffer. If
     // so, we can reuse the buffer and avoid client composition.
-    if (mClientCompositionRequestCache) {
+// QTI_BEGIN: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+    if (mClientCompositionRequestCache
+// QTI_END: 2023-03-06: Display: SF: Squash commit of SF Extensions.
+// QTI_BEGIN: 2023-05-24: Display: CompositionEngine: Avoid disabling SF Client Composition Caching
+        && (!QtiOutputExtension::qtiUseSpecFence() || mLayerRequestingBackgroundBlur != nullptr)
+        ) {
+// QTI_END: 2023-05-24: Display: CompositionEngine: Avoid disabling SF Client Composition Caching
         if (mClientCompositionRequestCache->exists(tex->getBuffer()->getId(),
                                                    clientCompositionDisplay,
                                                    clientCompositionLayers)) {
@@ -1385,7 +1448,8 @@ std::optional<base::unique_fd> Output::composeSurfaces(
     // or complex GPU shaders and it's expensive. We boost the GPU frequency so that
     // GPU composition can finish in time. We must reset GPU frequency afterwards,
     // because high frequency consumes extra battery.
-    const bool expensiveRenderingExpected =
+    const bool expensiveBlurs = mLayerRequestingBackgroundBlur != nullptr;
+    const bool expensiveRenderingExpected = expensiveBlurs ||
             std::any_of(clientCompositionLayers.begin(), clientCompositionLayers.end(),
                         [outputDataspace =
                                  clientCompositionDisplay.outputDataspace](const auto& layer) {
@@ -1560,7 +1624,9 @@ std::vector<LayerFE::LayerSettings> Output::generateClientCompositionRequests(
                                        .clearContent = !clientComposition,
                                        .blurSetting = blurSetting,
                                        .whitePointNits = layerState.whitePointNits,
-                                       .treat170mAsSrgb = outputState.treat170mAsSrgb};
+                                       .treat170mAsSrgb = outputState.treat170mAsSrgb,
+                                       .luts = layer->getState().hwc ? layer->getState().hwc->luts
+                                                                     : nullptr};
                 if (auto clientCompositionSettings =
                             layerFE.prepareClientComposition(targetSettings)) {
                     clientCompositionLayers.push_back(std::move(*clientCompositionSettings));
@@ -1665,6 +1731,7 @@ void Output::presentFrameAndReleaseLayers(bool flushEvenWhenDisabled) {
                     Fence::merge("LayerRelease", releaseFence, frame.clientTargetAcquireFence);
         }
         layer->getLayerFE().setReleaseFence(releaseFence);
+        layer->getLayerFE().setReleasedBuffer(layer->getLayerFE().getCompositionState()->buffer);
     }
 
     // We've got a list of layers needing fences, that are disjoint with
@@ -1834,7 +1901,7 @@ void Output::applyPictureProfile() {
     if (!getDisplayId()) {
         return;
     }
-    if (auto displayId = PhysicalDisplayId::tryCast(*getDisplayId())) {
+    if (auto displayId = getDisplayIdVariant().and_then(asPhysicalDisplayId)) {
         auto& hwc = getCompositionEngine().getHwComposer();
         const status_t error =
                 hwc.setDisplayPictureProfileHandle(*displayId, getState().pictureProfileHandle);

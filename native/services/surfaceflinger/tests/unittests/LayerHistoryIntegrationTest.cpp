@@ -584,7 +584,7 @@ TEST_F(LayerHistoryIntegrationTest, oneLayerExplicitGte_vrr) {
 
     auto layer = createLegacyAndFrontedEndLayer(1);
     showLayer(1);
-    setFrameRate(1, (33_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_GTE,
+    setFrameRate(1, (33_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_AT_LEAST,
                  ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
     setFrameRateCategory(1, 0);
 
@@ -623,7 +623,7 @@ TEST_F(LayerHistoryIntegrationTest, oneLayerExplicitGte_nonVrr) {
 
     auto layer = createLegacyAndFrontedEndLayer(1);
     showLayer(1);
-    setFrameRate(1, (33_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_GTE,
+    setFrameRate(1, (33_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_AT_LEAST,
                  ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
     setFrameRateCategory(1, 0);
 
@@ -662,7 +662,7 @@ TEST_F(LayerHistoryIntegrationTest, oneLayerGteNoVote_arr) {
 
     auto layer = createLegacyAndFrontedEndLayer(1);
     showLayer(1);
-    setFrameRate(1, (0_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_GTE,
+    setFrameRate(1, (0_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_AT_LEAST,
                  ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
 
     EXPECT_EQ(1u, layerCount());
@@ -694,7 +694,7 @@ TEST_F(LayerHistoryIntegrationTest, oneLayerGteNoVote_mrr) {
 
     auto layer = createLegacyAndFrontedEndLayer(1);
     showLayer(1);
-    setFrameRate(1, (0_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_GTE,
+    setFrameRate(1, (0_Hz).getValue(), ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_AT_LEAST,
                  ANATIVEWINDOW_CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
     setFrameRateCategory(1, 0);
 
@@ -1402,6 +1402,7 @@ TEST_F(LayerHistoryIntegrationTest, inactiveLayers) {
 }
 
 TEST_F(LayerHistoryIntegrationTest, invisibleExplicitLayerIsActive) {
+    // TODO(b/304338314): uncomment the below line once the bug is fixed
     SET_FLAG_FOR_TEST(flags::misc1, false);
 
     auto explicitVisiblelayer = createLegacyAndFrontedEndLayer(1);
@@ -1427,6 +1428,7 @@ TEST_F(LayerHistoryIntegrationTest, invisibleExplicitLayerIsActive) {
 }
 
 TEST_F(LayerHistoryIntegrationTest, invisibleExplicitLayerIsNotActive) {
+    // TODO(b/304338314): uncomment the below line once the bug is fixed
     SET_FLAG_FOR_TEST(flags::misc1, true);
 
     auto explicitVisiblelayer = createLegacyAndFrontedEndLayer(1);

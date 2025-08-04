@@ -1,3 +1,11 @@
+// QTI_BEGIN: 2023-03-13: WLAN: Add correct copyright marking in Wifi Icon files
+/*
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2023-03-13: WLAN: Add correct copyright marking in Wifi Icon files
 package com.android.settingslib;
 
 import static android.app.admin.DevicePolicyResources.Strings.Settings.WORK_PROFILE_USER_LABEL;
@@ -10,6 +18,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.content.pm.ResolveInfo;
 import android.content.pm.Signature;
 import android.content.pm.UserInfo;
 import android.content.res.ColorStateList;
@@ -32,6 +41,7 @@ import android.media.AudioManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
 import android.net.TetheringManager;
+import android.net.Uri;
 import android.net.vcn.VcnUtils;
 import android.net.wifi.WifiInfo;
 import android.os.BatteryManager;
@@ -47,6 +57,9 @@ import android.telephony.NetworkRegistrationInfo;
 import android.telephony.ServiceState;
 import android.telephony.TelephonyManager;
 import android.util.Log;
+// QTI_BEGIN: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+import android.net.wifi.ScanResult;
+// QTI_END: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
 import android.webkit.IWebViewUpdateService;
 import android.webkit.WebViewFactory;
 import android.webkit.WebViewProviderInfo;
@@ -79,11 +92,14 @@ public class Utils {
     @VisibleForTesting
     static final String STORAGE_MANAGER_ENABLED_PROPERTY = "ro.storage_manager.enabled";
 
+    private static final String PACKAGE_MIME_TYPE = "application/vnd.android.package-archive";
+
     private static Signature[] sSystemSignature;
     private static String sPermissionControllerPackageName;
     private static String sServicesSystemSharedLibPackageName;
     private static String sSharedSystemSharedLibPackageName;
     private static String sDefaultWebViewPackageName;
+    private static String sPackageInstallerPackageName;
 
     static final int[] WIFI_PIE = {
         com.android.internal.R.drawable.ic_wifi_signal_0,
@@ -101,6 +117,42 @@ public class Utils {
         R.drawable.ic_show_x_wifi_signal_4
     };
 
+// QTI_BEGIN: 2019-04-03: WLAN: wifi: Wifi generation and WPA3 UI enhancements for Access points.
+    static final int[] WIFI_4_PIE = {
+            com.android.internal.R.drawable.ic_wifi_4_signal_0,
+            com.android.internal.R.drawable.ic_wifi_4_signal_1,
+            com.android.internal.R.drawable.ic_wifi_4_signal_2,
+            com.android.internal.R.drawable.ic_wifi_4_signal_3,
+            com.android.internal.R.drawable.ic_wifi_4_signal_4
+    };
+
+    static final int[] WIFI_5_PIE = {
+            com.android.internal.R.drawable.ic_wifi_5_signal_0,
+            com.android.internal.R.drawable.ic_wifi_5_signal_1,
+            com.android.internal.R.drawable.ic_wifi_5_signal_2,
+            com.android.internal.R.drawable.ic_wifi_5_signal_3,
+            com.android.internal.R.drawable.ic_wifi_5_signal_4
+    };
+
+    static final int[] WIFI_6_PIE = {
+            com.android.internal.R.drawable.ic_wifi_6_signal_0,
+            com.android.internal.R.drawable.ic_wifi_6_signal_1,
+            com.android.internal.R.drawable.ic_wifi_6_signal_2,
+            com.android.internal.R.drawable.ic_wifi_6_signal_3,
+            com.android.internal.R.drawable.ic_wifi_6_signal_4
+    };
+
+// QTI_END: 2019-04-03: WLAN: wifi: Wifi generation and WPA3 UI enhancements for Access points.
+// QTI_BEGIN: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+    static final int[] WIFI_7_PIE = {
+            com.android.internal.R.drawable.ic_wifi_7_signal_0,
+            com.android.internal.R.drawable.ic_wifi_7_signal_1,
+            com.android.internal.R.drawable.ic_wifi_7_signal_2,
+            com.android.internal.R.drawable.ic_wifi_7_signal_3,
+            com.android.internal.R.drawable.ic_wifi_7_signal_4
+    };
+
+// QTI_END: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
     /** Update the location enable state. */
     public static void updateLocationEnabled(
             @NonNull Context context, boolean enabled, int userId, int source) {
@@ -496,7 +548,27 @@ public class Utils {
                 || packageName.equals(sSharedSystemSharedLibPackageName)
                 || packageName.equals(PrintManager.PRINT_SPOOLER_PACKAGE_NAME)
                 || packageName.equals(getDefaultWebViewPackageName(pm))
+                || packageName.equals(getPackageInstallerPackageName(pm))
                 || isDeviceProvisioningPackage(resources, packageName);
+    }
+
+    /** Return the package name of the installer */
+    private static String getPackageInstallerPackageName(PackageManager pm) {
+        if (sPackageInstallerPackageName != null) {
+            return sPackageInstallerPackageName;
+        }
+        final Intent intent = new Intent(Intent.ACTION_INSTALL_PACKAGE);
+        intent.addCategory(Intent.CATEGORY_DEFAULT);
+        intent.setDataAndType(Uri.parse("content://com.example/foo.apk"), PACKAGE_MIME_TYPE);
+        final List<ResolveInfo> matches =
+                pm.queryIntentActivities(intent, PackageManager.GET_META_DATA);
+        if (matches.size() == 1) {
+            final ResolveInfo resolveInfo = matches.get(0);
+            if (resolveInfo.activityInfo.applicationInfo.isPrivilegedApp()) {
+                sPackageInstallerPackageName = resolveInfo.getComponentInfo().packageName;
+            }
+        }
+        return sPackageInstallerPackageName;
     }
 
     /**
@@ -546,7 +618,7 @@ public class Utils {
      * @throws IllegalArgumentException if an invalid RSSI level is given.
      */
     public static int getWifiIconResource(int level) {
-        return getWifiIconResource(false /* showX */, level);
+        return getWifiIconResource(false /* showX */, level, 0 /* standard */);
     }
 
     /**
@@ -558,10 +630,62 @@ public class Utils {
      * @throws IllegalArgumentException if an invalid RSSI level is given.
      */
     public static int getWifiIconResource(boolean showX, int level) {
+        return getWifiIconResource(showX, level, 0 /* standard */);
+    }
+
+    /**
+     * Returns the Wifi icon resource for a given RSSI level.
+     *
+     * @param level The number of bars to show (0-4)
+     * @throws IllegalArgumentException if an invalid RSSI level is given.
+     */
+    public static int getWifiIconResource(int level, int standard) {
+        return getWifiIconResource(false /* showX */, level,  standard);
+    }
+
+    /**
+     * Returns the Wifi icon resource for a given RSSI level.
+     *
+     * @param showX True if a connected Wi-Fi network has the problem which should show Pie+x
+     *              signal icon to users.
+     * @param level The number of bars to show (0-4)
+     * @throws IllegalArgumentException if an invalid RSSI level is given.
+     */
+    public static int getWifiIconResource(boolean showX, int level, int standard) {
         if (level < 0 || level >= WIFI_PIE.length) {
             throw new IllegalArgumentException("No Wifi icon found for level: " + level);
         }
-        return showX ? SHOW_X_WIFI_PIE[level] : WIFI_PIE[level];
+
+        if (showX) return SHOW_X_WIFI_PIE[level];
+
+// QTI_BEGIN: 2020-04-22: WLAN: wifi: refactor Wi-Fi generation UI enhancements
+        switch (standard) {
+// QTI_END: 2020-04-22: WLAN: wifi: refactor Wi-Fi generation UI enhancements
+// QTI_BEGIN: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+            case ScanResult.WIFI_STANDARD_11N:
+// QTI_END: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+// QTI_BEGIN: 2019-04-03: WLAN: wifi: Wifi generation and WPA3 UI enhancements for Access points.
+                return WIFI_4_PIE[level];
+// QTI_END: 2019-04-03: WLAN: wifi: Wifi generation and WPA3 UI enhancements for Access points.
+// QTI_BEGIN: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+            case ScanResult.WIFI_STANDARD_11AC:
+// QTI_END: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+                return WIFI_5_PIE[level];
+// QTI_BEGIN: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+            case ScanResult.WIFI_STANDARD_11AX:
+// QTI_END: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+// QTI_BEGIN: 2019-04-03: WLAN: wifi: Wifi generation and WPA3 UI enhancements for Access points.
+                return WIFI_6_PIE[level];
+// QTI_END: 2019-04-03: WLAN: wifi: Wifi generation and WPA3 UI enhancements for Access points.
+// QTI_BEGIN: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+            case ScanResult.WIFI_STANDARD_11BE:
+                return WIFI_7_PIE[level];
+// QTI_END: 2023-02-17: WLAN: wifi: Display Wi-Fi standard in signal icons for Wi-Fi 7 APs
+// QTI_BEGIN: 2019-04-03: WLAN: wifi: Wifi generation and WPA3 UI enhancements for Access points.
+            default:
+                return WIFI_PIE[level];
+       }
+// QTI_END: 2019-04-03: WLAN: wifi: Wifi generation and WPA3 UI enhancements for Access points.
     }
 
     public static int getDefaultStorageManagerDaysToRetain(Resources resources) {

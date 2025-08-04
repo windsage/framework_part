@@ -57,7 +57,14 @@ import android.util.EventLog;
 import android.util.Slog;
 import android.util.TimeUtils;
 import android.util.proto.ProtoOutputStream;
-
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+import android.util.BoostFramework;
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+//T-HUB core[OS]: add by liyangtao 20220620 start
+import com.transsion.hubcore.server.am.ITranProcessRecord;
+//T-HUB core[OS]: add by liyangtao 20220620 end
+//T-HUB core[SPD]: add by jing.lv 20230307 start
+import com.transsion.hubcore.server.am.ITranProcessRecordProxy;
 import com.android.internal.annotations.CompositeRWLock;
 import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
@@ -70,15 +77,47 @@ import com.android.server.wm.WindowProcessController;
 import com.android.server.wm.WindowProcessListener;
 
 import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.Arrays;
 import java.util.List;
-import java.util.function.Consumer;
 
+//T-HUB Core[SPD]:added for spd by yiying.wang 20220622 start
+import com.transsion.hubcore.griffin.ITranGriffinFeature;
+import com.transsion.hubcore.griffin.lib.app.TranProcessWrapper;
+import com.transsion.hubcore.griffin.lib.app.TranProcessInfo;
+import com.transsion.hubcore.griffin.lib.app.TranAppInfo;
+//T-HUB Core[SPD]:added for spd by yiying.wang 20220622 end
+
+import java.util.function.Consumer;
+//add by lin.chen9 20250514 start
+import java.util.ArrayList;
+import android.content.Intent;
+//add by lin.chen9 20250514 end
+//T-HUB core[SPD]: add by jing.lv 20230307 start
+import com.transsion.hubcore.server.am.ITranProcessRecordProxy;
+import android.content.Intent;
+import com.android.server.wm.ActivityRecord;
+import java.util.HashSet;
+import java.util.Set;
+//T-HUB core[SPD]: add by jing.lv 20230307 end
+//T-HUB core[OS]: add by ming.ren 20220516 start
+import com.transsion.hubcore.server.am.ITranActivityManagerService;
+//T-HUB core[OS]: add by ming.ren 20220516 end
+
+//T-HUB core[SPD]: add by jing.lv 20230307 start
+import static com.android.server.am.ProcessList.SCHED_GROUP_DEFAULT;
+//T-HUB core[SPD]: add by jing.lv 20230307 end
+//T-HUB Core[SPD]:added for spd by yiying.wang 20220622 start
+import com.transsion.hubcore.griffin.ITranGriffinFeature;
+import com.transsion.hubcore.griffin.lib.app.TranProcessWrapper;
+import com.transsion.hubcore.griffin.lib.app.TranProcessInfo;
+import com.transsion.hubcore.griffin.lib.app.TranAppInfo;
+//T-HUB Core[SPD]:added for spd by yiying.wang 20220622 end
 /**
  * Full information about a particular process that
  * is currently running.
  */
-class ProcessRecord implements WindowProcessListener {
+public class ProcessRecord implements WindowProcessListener {
     static final String TAG = TAG_WITH_CLASS_NAME ? "ProcessRecord" : TAG_AM;
 
     final ActivityManagerService mService; // where we came from
@@ -740,6 +779,25 @@ class ProcessRecord implements WindowProcessListener {
 
     @GuardedBy({"mService", "mProcLock"})
     public void makeActive(ApplicationThreadDeferred thread, ProcessStatsService tracker) {
+        // TODO(b/180501180): Add back this logging message.
+        /*
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+        String seempStr = "app_uid=" + uid
+                            + ",app_pid=" + pid + ",oom_adj=" + curAdj
+                            + ",setAdj=" + setAdj + ",hasShownUi=" + (hasShownUi ? 1 : 0)
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+                            + ",cached=" + (mCached ? 1 : 0)
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+                            + ",fA=" + (mHasForegroundActivities ? 1 : 0)
+                            + ",fS=" + (mHasForegroundServices ? 1 : 0)
+                            + ",systemNoUi=" + (systemNoUi ? 1 : 0)
+                            + ",curSchedGroup=" + mCurSchedGroup
+                            + ",curProcState=" + getCurProcState() + ",setProcState=" + setProcState
+                            + ",killed=" + (killed ? 1 : 0) + ",killedByAm=" + (killedByAm ? 1 : 0)
+                            + ",isDebugging=" + (isDebugging() ? 1 : 0);
+        android.util.SeempLog.record_str(386, seempStr);
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+        */
         mProfile.onProcessActive(thread, tracker);
         mThread = thread;
         if (mPid == Process.myPid()) {
@@ -755,6 +813,25 @@ class ProcessRecord implements WindowProcessListener {
 
     @GuardedBy({"mService", "mProcLock"})
     public void makeInactive(ProcessStatsService tracker) {
+        // TODO(b/180501180): Add back this logging message.
+        /*
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+        String seempStr = "app_uid=" + uid
+                            + ",app_pid=" + pid + ",oom_adj=" + curAdj
+                            + ",setAdj=" + setAdj + ",hasShownUi=" + (hasShownUi ? 1 : 0)
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+                            + ",cached=" + (mCached ? 1 : 0)
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+                            + ",fA=" + (mHasForegroundActivities ? 1 : 0)
+                            + ",fS=" + (mHasForegroundServices ? 1 : 0)
+                            + ",systemNoUi=" + (systemNoUi ? 1 : 0)
+                            + ",curSchedGroup=" + mCurSchedGroup
+                            + ",curProcState=" + getCurProcState() + ",setProcState=" + setProcState
+                            + ",killed=" + (killed ? 1 : 0) + ",killedByAm=" + (killedByAm ? 1 : 0)
+                            + ",isDebugging=" + (isDebugging() ? 1 : 0);
+        android.util.SeempLog.record_str(387, seempStr);
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+        */
         mThread = null;
         mOnewayThread = null;
         mWindowProcessController.setThread(null);
@@ -939,6 +1016,9 @@ class ProcessRecord implements WindowProcessListener {
     @GuardedBy("mProcLock")
     void setRenderThreadTid(int renderThreadTid) {
         mRenderThreadTid = renderThreadTid;
+        //T-HUB Core[SPD]:added for ui aware scheduling by yunjun.yang 20240514 start
+        ITranProcessRecord.Instance().hookSetRenderThreadTid(new TranProcessReordProxy(this));
+        //T-HUB Core[SPD]:added for ui aware scheduling by yunjun.yang 20240514 end
     }
 
     @GuardedBy("mService")
@@ -1002,6 +1082,11 @@ class ProcessRecord implements WindowProcessListener {
     @GuardedBy(anyOf = {"mService", "mProcLock"})
     ActiveInstrumentation getActiveInstrumentation() {
         return mInstr;
+    }
+
+    @GuardedBy(anyOf = {"mService", "mProcLock"})
+    boolean hasActiveInstrumentation() {
+        return mInstr != null;
     }
 
     @GuardedBy(anyOf = {"mService", "mProcLock"})
@@ -1285,6 +1370,9 @@ class ProcessRecord implements WindowProcessListener {
                     && mErrorState.getAnrAnnotation() != null) {
                 description = description + ": " + mErrorState.getAnrAnnotation();
             }
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+            BoostFramework ux_perf = new BoostFramework();
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
             if (mService != null && (noisy || info.uid == mService.mCurOomAdjUid)) {
                 mService.reportUidInfoMessageLocked(TAG,
                         "Killing " + toShortString() + " (adj " + mState.getSetAdj()
@@ -1309,6 +1397,22 @@ class ProcessRecord implements WindowProcessListener {
                     mKillTime = SystemClock.uptimeMillis();
                 }
             }
+            if (ux_perf != null && !mService.mForceStopKill && !mErrorState.isNotResponding()
+                && !mErrorState.isCrashing()) {
+                if (ux_perf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                    ux_perf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                    ux_perf.perfUXEngine_events(BoostFramework.UXE_EVENT_KILL, 0, this.processName, 0);
+                }
+// QTI_BEGIN: 2021-09-23: Performance: BoostFramework: Replace PerfHint with PerfEvent.
+                ux_perf.perfEvent(BoostFramework.VENDOR_HINT_KILL,this.processName, 2, 0,getPid());
+// QTI_END: 2021-09-23: Performance: BoostFramework: Replace PerfHint with PerfEvent.
+// QTI_BEGIN: 2019-06-26: Performance: Fix PreferredApps CTS issue.
+            } else {
+                mService.mForceStopKill = false;
+// QTI_END: 2019-06-26: Performance: Fix PreferredApps CTS issue.
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+            }
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
             Trace.traceEnd(Trace.TRACE_TAG_ACTIVITY_MANAGER);
         }
     }
@@ -1409,6 +1513,16 @@ class ProcessRecord implements WindowProcessListener {
         return mStringName = sb.toString();
     }
 
+    String toDetailedString() {
+        final StringBuilder sb = new StringBuilder();
+        sb.append(this);
+        final StringWriter sw = new StringWriter();
+        final PrintWriter pw = new PrintWriter(sw);
+        dump(pw, "  ");
+        sb.append(sw);
+        return sb.toString();
+    }
+
     /*
      *  Return true if package has been added false if not
      */
@@ -1438,17 +1552,32 @@ class ProcessRecord implements WindowProcessListener {
 
     void onProcessFrozen() {
         mProfile.onProcessFrozen();
-        if (mThread != null) mThread.onProcessPaused();
+        final ApplicationThreadDeferred t;
+        synchronized (mService) {
+            t = mThread;
+        }
+        // Release the lock before calling the notifier, in case that calls back into AM.
+        if (t != null) t.onProcessPaused();
     }
 
     void onProcessUnfrozen() {
-        if (mThread != null) mThread.onProcessUnpaused();
+        final ApplicationThreadDeferred t;
+        synchronized (mService) {
+            t = mThread;
+        }
+        // Release the lock before calling the notifier, in case that calls back into AM.
+        if (t != null) t.onProcessUnpaused();
         mProfile.onProcessUnfrozen();
         mServices.onProcessUnfrozen();
     }
 
     void onProcessFrozenCancelled() {
-        if (mThread != null) mThread.onProcessPausedCancelled();
+        final ApplicationThreadDeferred t;
+        synchronized (mService) {
+            t = mThread;
+        }
+        // Release the lock before calling the notifier, in case that calls back into AM.
+        if (t != null) t.onProcessPausedCancelled();
         mServices.onProcessFrozenCancelled();
     }
 
@@ -1699,8 +1828,27 @@ class ProcessRecord implements WindowProcessListener {
         return mService.mOomAdjuster.mCachedAppOptimizer.useFreezer()
                 && !mOptRecord.isFreezeExempt()
                 && !mOptRecord.shouldNotFreeze()
-                && mState.getCurAdj() >= ProcessList.FREEZER_CUTOFF_ADJ;
+                && mState.getCurAdj() >= mService.mConstants.FREEZER_CUTOFF_ADJ;
     }
+/*    //SPD: add for PROCMANA-5 Griffin 2.1 by hanhao 20190602 start
+    public boolean launchingProvider = false;
+    final MyProcessWrapper processWrapper;
+    private MyProcessWrapper createWrapper() {
+        //T-HUB Core[SPD]:added for spd by yiying.wang 20220622 start
+        TranProcessInfo griffinProcessInfo = ITranProcessRecord.Instance().initMyProcessWrapper(processName, uid, mPkgList, info);
+        //T-HUB Core[SPD]:added for spd by yiying.wang 20220622 end
+        return new MyProcessWrapper(griffinProcessInfo);
+    }
+    // T-HUB Core[SPD]: Add for gameguard by yinggang.li 20240612 start
+    private String mLaunchedFromPackage;
+    public void setLaunchedFromPackage(String launchedFromPackage) {
+        mLaunchedFromPackage = launchedFromPackage;
+    }
+    public String getLaunchedFromPackage() {
+        return mLaunchedFromPackage;
+    }
+
+    // T-HUB Core[SPD]: Add for gameguard by yinggang.li 20240612 end*/
 
     public void forEachConnectionHost(Consumer<ProcessRecord> consumer) {
         for (int i = mServices.numberOfConnections() - 1; i >= 0; i--) {
@@ -1719,4 +1867,96 @@ class ProcessRecord implements WindowProcessListener {
             consumer.accept(provider);
         }
     }
+ /*   //T-HUB Core[SPD]:added for spd by yiying.wang 20220622 start
+    private MyProcessWrapper initProcessWrapperByGriffin() {
+        //SPD: add for PROCMANA-5 Griffin 2.1 by feng.an 20190820 start
+        MyProcessWrapper processWrapper = null;
+        if (ITranGriffinFeature.Instance().isGriffinSupport()) {
+            processWrapper = createWrapper();
+            mWindowProcessController.setProcessWrapper(processWrapper);
+        }
+        return processWrapper;
+        //SPD: add for PROCMANA-5 Griffin 2.1 by feng.an 20190820 end
+    }
+    //T-HUB Core[SPD]:added for spd by yiying.wang 20220622 end*/
+ //T-HUB Core[SPD]:added for spd by jing.lv 20230307 start
+ public static class TranProcessReordProxy implements ITranProcessRecordProxy {
+     private ProcessRecord mRecord;
+     public TranProcessReordProxy(ProcessRecord record){
+         mRecord = record;
+     }
+
+     @Override
+     public int getUid() {
+         int uid = -1;
+         if(null != mRecord){
+             uid = mRecord.uid;
+         }
+         return uid;
+     }
+
+     @Override
+     public String getProcessName() {
+         String processName = "";
+         if(null != mRecord){
+             processName = mRecord.processName;
+         }
+         return processName;
+     }
+
+     @Override
+     public int getRenderThreadTid() {
+         int id = 0;
+         if(null != mRecord) {
+             id = mRecord.getRenderThreadTid();
+         }
+         return id;
+     }
+
+     @Override
+     public int getPid() {
+         int pid = 0;
+         if(null != mRecord) {
+             pid = mRecord.getPid();
+         }
+         return pid;
+     }
+
+     @Override
+     public String getPackageName(){
+         String packageName = "";
+         if(null != mRecord && mRecord.info != null) {
+             packageName = mRecord.info.packageName;//mRecord.getPackageName();
+         }
+         return packageName;
+     }
+
+     @Override
+     public int getCurSetGroup() {
+         int curGroup = SCHED_GROUP_DEFAULT;
+         if(null != mRecord) {
+             curGroup = mRecord.mState.getSetSchedGroup();
+         }
+         return curGroup;
+     }
+
+     @Override
+     public boolean hasActivities() {
+         boolean hasActivities = false;
+         if(null != mRecord) {
+             hasActivities = mRecord.hasActivities();
+         }
+         return hasActivities;
+     }
+
+     @Override
+     public boolean hasRecentTasks() {
+         boolean hasRecentTasks = false;
+         if(null != mRecord) {
+             hasRecentTasks = mRecord.hasRecentTasks();
+         }
+         return hasRecentTasks;
+     }
+ }
+    //T-HUB Core[SPD]:added for spd by jing.lv 20230307 end
 }

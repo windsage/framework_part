@@ -67,6 +67,8 @@
 #include <bionic/mte.h>
 #include <cutils/fs.h>
 #include <cutils/multiuser.h>
+#include <cutils/properties.h>
+#include <cutils/sched_policy.h>
 #include <cutils/sockets.h>
 #include <private/android_filesystem_config.h>
 #include <processgroup/processgroup.h>
@@ -76,6 +78,9 @@
 #include <stats_socket.h>
 #include <utils/String8.h>
 #include <utils/Trace.h>
+// QTI_BEGIN: 2020-07-29: Performance: Add beluga function
+#include <dlfcn.h>
+// QTI_END: 2020-07-29: Performance: Add beluga function
 
 #include <nativehelper/JNIHelp.h>
 #include <nativehelper/ScopedLocalRef.h>
@@ -620,7 +625,14 @@ static void EnableDebugger() {
     if (getrlimit(RLIMIT_CORE, &rl) == -1) {
       ALOGE("getrlimit(RLIMIT_CORE) failed");
     } else {
-      rl.rlim_cur = 0;
+      char prop_value[PROPERTY_VALUE_MAX];
+      property_get("persist.debug.trace", prop_value, "0");
+      if (prop_value[0] == '1') {
+        ALOGI("setting RLIM to infinity");
+        rl.rlim_cur = RLIM_INFINITY;
+      } else {
+        rl.rlim_cur = 0;
+      }
       if (setrlimit(RLIMIT_CORE, &rl) == -1) {
         ALOGE("setrlimit(RLIMIT_CORE) failed");
       }
@@ -634,6 +646,21 @@ static void PreApplicationInit() {
 
   // Set the jemalloc decay time to 1.
   mallopt(M_DECAY_TIME, 1);
+// QTI_BEGIN: 2020-07-29: Performance: Add beluga function
+
+  void *mBelugaHandle = nullptr;
+  void (*mBeluga)() = nullptr;
+  mBelugaHandle = dlopen("libbeluga.so", RTLD_NOW);
+  if (!mBelugaHandle) {
+    ALOGW("Unable to open libbeluga.so: %s.", dlerror());
+  }
+  else {
+    mBeluga = (void (*) ())dlsym(mBelugaHandle, "beluga");
+    if (mBeluga)
+      mBeluga();
+    dlclose(mBelugaHandle);
+  }
+// QTI_END: 2020-07-29: Performance: Add beluga function
 }
 
 static void SetUpSeccompFilter(uid_t uid, bool is_child_zygote) {
@@ -1833,6 +1860,15 @@ static void BindMountSyspropOverride(fail_fn_t fail_fn, JNIEnv* env) {
   ReloadBuildJavaConstants(env);
 }
 
+static void MountInitOverride(fail_fn_t fail_fn, JNIEnv* env) {
+    const char* init_etc_dir = "/system/etc/init";
+
+    if (TEMP_FAILURE_RETRY(mount("tmpfs", init_etc_dir, "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC,
+                                 "uid=0,gid=0,mode=0751")) == -1) {
+        fail_fn(CREATE_ERROR("Failed to mount tmpfs %s: %s", init_etc_dir, strerror(errno)));
+    }
+}
+
 static void BindMountStorageToLowerFs(const userid_t user_id, const uid_t uid,
     const char* dir_name, const char* package, fail_fn_t fail_fn) {
     bool hasSdcardFs = IsSdcardfsUsed();
@@ -1954,6 +1990,7 @@ static void SpecializeCommon(JNIEnv* env, uid_t uid, gid_t gid, jintArray gids, 
 
     if (mount_sysprop_overrides) {
         BindMountSyspropOverride(fail_fn, env);
+        MountInitOverride(fail_fn, env);
     }
 
     // If this zygote isn't root, it won't be able to create a process group,
@@ -2213,7 +2250,9 @@ static jlong CalculateCapabilities(JNIEnv* env, jint uid, jint gid, jintArray gi
   /*
    *  Grant the following capabilities to the Bluetooth user:
    *    - CAP_WAKE_ALARM
+// QTI_BEGIN: 2019-06-24: Bluetooth: BT: Add CAP_NET_ADMIN for Bluetooth Process
    *    - CAP_NET_ADMIN
+// QTI_END: 2019-06-24: Bluetooth: BT: Add CAP_NET_ADMIN for Bluetooth Process
    *    - CAP_NET_RAW
    *    - CAP_NET_BIND_SERVICE (for DHCP client functionality)
    *    - CAP_SYS_NICE (for setting RT priority for audio-related threads)
@@ -2221,10 +2260,15 @@ static jlong CalculateCapabilities(JNIEnv* env, jint uid, jint gid, jintArray gi
 
   if (multiuser_get_app_id(uid) == AID_BLUETOOTH) {
     capabilities |= (1LL << CAP_WAKE_ALARM);
+// QTI_BEGIN: 2019-06-25: Bluetooth: BT: Add CAP_NET_ADMIN for Bluetooth Process
     capabilities |= (1LL << CAP_NET_ADMIN);
+// QTI_END: 2019-06-25: Bluetooth: BT: Add CAP_NET_ADMIN for Bluetooth Process
     capabilities |= (1LL << CAP_NET_RAW);
     capabilities |= (1LL << CAP_NET_BIND_SERVICE);
     capabilities |= (1LL << CAP_SYS_NICE);
+// QTI_BEGIN: 2019-06-24: Bluetooth: BT: Add CAP_NET_ADMIN for Bluetooth Process
+    capabilities |= (1LL << CAP_NET_ADMIN);
+// QTI_END: 2019-06-24: Bluetooth: BT: Add CAP_NET_ADMIN for Bluetooth Process
   }
 
   if (multiuser_get_app_id(uid) == AID_NETWORK_STACK) {

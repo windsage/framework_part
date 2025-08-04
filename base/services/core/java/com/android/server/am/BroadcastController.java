@@ -47,6 +47,8 @@ import static com.android.server.am.ActivityManagerService.UPDATE_HTTP_PROXY_MSG
 import static com.android.server.am.ActivityManagerService.UPDATE_TIME_PREFERENCE_MSG;
 import static com.android.server.am.ActivityManagerService.UPDATE_TIME_ZONE;
 import static com.android.server.am.ActivityManagerService.checkComponentPermission;
+import static com.android.server.am.BroadcastRecord.debugLog;
+import static com.android.server.am.BroadcastRecord.intentToString;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -128,6 +130,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BiFunction;
 
 class BroadcastController {
@@ -164,6 +167,12 @@ class BroadcastController {
      */
     @GuardedBy("mService")
     private ArraySet<String> mBackgroundLaunchBroadcasts;
+
+    /**
+    * Map of Broadcast actions to list of packages
+    * which can receive broadcast
+    */
+    private ArrayMap<String, Set<String>> mQtiBackgroundLaunchBroadcasts;
 
     /**
      * State of all active sticky broadcasts per user.  Keys are the action of the
@@ -315,9 +324,8 @@ class BroadcastController {
                 Slog.w(TAG, "registerReceiverWithFeature: no app for " + caller);
                 return null;
             }
-            if (callerApp.info.uid != SYSTEM_UID
-                    && !callerApp.getPkgList().containsKey(callerPackage)
-                    && !"android".equals(callerPackage)) {
+            if (!UserHandle.isCore(callerApp.info.uid)
+                    && !callerApp.getPkgList().containsKey(callerPackage)) {
                 throw new SecurityException("Given caller package " + callerPackage
                         + " is not running in process " + callerApp);
             }
@@ -1018,6 +1026,13 @@ class BroadcastController {
                         android.Manifest.permission.ACCESS_BROADCAST_RESPONSE_STATS,
                         callingPid, callingUid, "recordResponseEventWhileInBackground");
             }
+
+            if (brOptions.isDebugLogEnabled()) {
+                if (!isShellOrRoot(callingUid)
+                        && (callerApp == null || !callerApp.hasActiveInstrumentation())) {
+                    brOptions.setDebugLogEnabled(false);
+                }
+            }
         }
 
         // Verify that protected broadcasts are only being sent by system code,
@@ -1094,6 +1109,12 @@ class BroadcastController {
             if (getBackgroundLaunchBroadcasts().contains(action)) {
                 if (DEBUG_BACKGROUND_CHECK) {
                     Slog.i(TAG, "Broadcast action " + action + " forcing include-background");
+                }
+                intent.addFlags(Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
+            }
+            if (getQtiBackgroundLaunchBroadcasts().containsKey(action)) {
+                if (DEBUG_BACKGROUND_CHECK) {
+                    Slog.i(TAG, "Broadcast action qti " + action + " forcing include-background");
                 }
                 intent.addFlags(Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
             }
@@ -1597,6 +1618,23 @@ class BroadcastController {
                 }
             }
 
+            if(getQtiBackgroundLaunchBroadcasts().containsKey(intent.getAction())) {
+                 Set<String> nonSkipPackages = getQtiBackgroundLaunchBroadcasts().get(intent.getAction());
+                 List<ResolveInfo> packageAddedReceivers = new ArrayList<>();
+                 for (String nonSkipPackage : nonSkipPackages) {
+                    if (nonSkipPackage != null) {
+                        int NT = receivers.size();
+                        for (int it=0; it<NT; it++) {
+                            ResolveInfo curt = (ResolveInfo)receivers.get(it);
+                            if (curt.activityInfo.packageName.equals(nonSkipPackage)) {
+                                packageAddedReceivers.add(curt);
+                            }
+                        }
+                    }
+                }
+                receivers = packageAddedReceivers;
+            }
+
             int NT = receivers != null ? receivers.size() : 0;
             int it = 0;
             ResolveInfo curt = null;
@@ -1623,6 +1661,10 @@ class BroadcastController {
             }
         }
         while (ir < NR) {
+            // Instant Apps cannot use FLAG_RECEIVER_VISIBLE_TO_INSTANT_APPS
+            if (callerInstantApp) {
+                intent.setFlags(intent.getFlags() & ~Intent.FLAG_RECEIVER_VISIBLE_TO_INSTANT_APPS);
+            }
             if (receivers == null) {
                 receivers = new ArrayList();
             }
@@ -1648,7 +1690,9 @@ class BroadcastController {
                     callerAppProcessState, mService.mPlatformCompat);
             broadcastSentEventRecord.setBroadcastRecord(r);
 
-            if (DEBUG_BROADCAST) Slog.v(TAG_BROADCAST, "Enqueueing ordered broadcast " + r);
+            if (DEBUG_BROADCAST || r.debugLog()) {
+                Slog.v(TAG_BROADCAST, "Enqueueing broadcast " + r);
+            }
             queue.enqueueBroadcastLocked(r);
         } else {
             // There was nobody interested in the broadcast, but we still want to record
@@ -1658,9 +1702,17 @@ class BroadcastController {
                 // This was an implicit broadcast... let's record it for posterity.
                 addBroadcastStatLocked(intent.getAction(), callerPackage, 0, 0, 0);
             }
+            if (DEBUG_BROADCAST || debugLog(brOptions)) {
+                Slog.v(TAG_BROADCAST, "Skipping broadcast " + intentToString(intent)
+                        + " due to no receivers");
+            }
         }
 
         return ActivityManager.BROADCAST_SUCCESS;
+    }
+
+    private boolean isShellOrRoot(int uid) {
+        return uid == SHELL_UID || uid == ROOT_UID;
     }
 
     @GuardedBy("mService")
@@ -1905,6 +1957,13 @@ class BroadcastController {
         return mBackgroundLaunchBroadcasts;
     }
 
+    private ArrayMap<String, Set<String>> getQtiBackgroundLaunchBroadcasts() {
+        if (mQtiBackgroundLaunchBroadcasts == null) {
+            mQtiBackgroundLaunchBroadcasts = SystemConfig.getInstance().getQtiAllowImplicitBroadcasts();
+        }
+        return mQtiBackgroundLaunchBroadcasts;
+    }
+
     private boolean isInstantApp(ProcessRecord record, @Nullable String callerPackage, int uid) {
         if (UserHandle.getAppId(uid) < FIRST_APPLICATION_UID) {
             return false;
@@ -1939,7 +1998,9 @@ class BroadcastController {
 
     private void sendPackageBroadcastLocked(int cmd, String[] packages, int userId) {
         mService.mProcessList.sendPackageBroadcastLocked(cmd, packages, userId);
-    }private List<ResolveInfo> collectReceiverComponents(
+    }
+
+    private List<ResolveInfo> collectReceiverComponents(
             Intent intent, String resolvedType, int callingUid, int callingPid,
             int[] users, int[] broadcastAllowList) {
         // TODO: come back and remove this assumption to triage all broadcasts
@@ -2179,6 +2240,8 @@ class BroadcastController {
         boolean printedAnything = false;
         boolean onlyReceivers = false;
         int filteredUid = Process.INVALID_UID;
+        boolean onlyFilter = false;
+        String dumpIntentAction = null;
 
         if ("history".equals(dumpPackage)) {
             if (opti < args.length && "-s".equals(args[opti])) {
@@ -2186,8 +2249,7 @@ class BroadcastController {
             }
             onlyHistory = true;
             dumpPackage = null;
-        }
-        if ("receivers".equals(dumpPackage)) {
+        } else if ("receivers".equals(dumpPackage)) {
             onlyReceivers = true;
             dumpPackage = null;
             if (opti + 2 <= args.length) {
@@ -2206,7 +2268,23 @@ class BroadcastController {
                     }
                 }
             }
+        } else if ("filter".equals(dumpPackage)) {
+            onlyFilter = true;
+            dumpPackage = null;
+            if (opti + 2 <= args.length) {
+                if ("--action".equals(args[opti++])) {
+                    dumpIntentAction = args[opti++];
+                    if (dumpIntentAction == null) {
+                        pw.printf("Missing argument for --action option\n");
+                        return;
+                    }
+                } else {
+                    pw.printf("Unknown argument: %s\n", args[opti]);
+                    return;
+                }
+            }
         }
+
         if (DEBUG_BROADCAST) {
             Slogf.d(TAG_BROADCAST, "dumpBroadcastsLocked(): dumpPackage=%s, onlyHistory=%b, "
                             + "onlyReceivers=%b, filteredUid=%d", dumpPackage, onlyHistory,
@@ -2214,7 +2292,7 @@ class BroadcastController {
         }
 
         pw.println("ACTIVITY MANAGER BROADCAST STATE (dumpsys activity broadcasts)");
-        if (!onlyHistory && dumpAll) {
+        if (!onlyHistory && !onlyFilter && dumpAll) {
             if (mRegisteredReceivers.size() > 0) {
                 boolean printed = false;
                 Iterator it = mRegisteredReceivers.values().iterator();
@@ -2258,14 +2336,14 @@ class BroadcastController {
 
         if (!onlyReceivers) {
             needSep = mBroadcastQueue.dumpLocked(fd, pw, args, opti,
-                    dumpConstants, dumpHistory, dumpAll, dumpPackage, needSep);
+                    dumpConstants, dumpHistory, dumpAll, dumpPackage, dumpIntentAction, needSep);
             printedAnything |= needSep;
         }
 
         needSep = true;
 
         synchronized (mStickyBroadcasts) {
-            if (!onlyHistory && !onlyReceivers && mStickyBroadcasts != null
+            if (!onlyHistory && !onlyReceivers && !onlyFilter && mStickyBroadcasts != null
                     && dumpPackage == null) {
                 for (int user = 0; user < mStickyBroadcasts.size(); user++) {
                     if (needSep) {
@@ -2313,13 +2391,12 @@ class BroadcastController {
             }
         }
 
-        if (!onlyHistory && !onlyReceivers && dumpAll) {
+        if (!onlyHistory && !onlyReceivers && !onlyFilter && dumpAll) {
             pw.println();
-            pw.println("  Queue " + mBroadcastQueue.toString() + ": "
+            pw.println("  Queue " + mBroadcastQueue + ": "
                     + mBroadcastQueue.describeStateLocked());
             pw.println("  mHandler:");
             mService.mHandler.dump(new PrintWriterPrinter(pw), "    ");
-            needSep = true;
             printedAnything = true;
         }
 

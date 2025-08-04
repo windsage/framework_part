@@ -1,5 +1,8 @@
 package com.android.server.wm;
 
+// QTI_BEGIN: 2020-01-20: Performance: Changing app classification logic from manifest-based to WLC-based
+import android.app.ActivityManager;
+// QTI_END: 2020-01-20: Performance: Changing app classification logic from manifest-based to WLC-based
 import static android.app.ActivityManager.PROCESS_STATE_NONEXISTENT;
 import static android.app.ActivityManager.START_SUCCESS;
 import static android.app.ActivityManager.START_TASK_TO_FRONT;
@@ -57,6 +60,7 @@ import static com.android.internal.logging.nano.MetricsProto.MetricsEvent.TYPE_T
 import static com.android.internal.logging.nano.MetricsProto.MetricsEvent.TYPE_TRANSITION_REPORTED_DRAWN_NO_BUNDLE;
 import static com.android.internal.logging.nano.MetricsProto.MetricsEvent.TYPE_TRANSITION_REPORTED_DRAWN_WITH_BUNDLE;
 import static com.android.internal.logging.nano.MetricsProto.MetricsEvent.TYPE_TRANSITION_WARM_LAUNCH;
+import static com.android.internal.protolog.WmProtoLogGroups.WM_DEBUG_WINDOW_TRANSITIONS;
 import static com.android.internal.util.FrameworkStatsLog.APP_COMPAT_STATE_CHANGED__LETTERBOX_POSITION__NOT_LETTERBOXED_POSITION;
 import static com.android.internal.util.FrameworkStatsLog.APP_COMPAT_STATE_CHANGED__STATE__LETTERBOXED_FOR_ASPECT_RATIO;
 import static com.android.internal.util.FrameworkStatsLog.APP_COMPAT_STATE_CHANGED__STATE__LETTERBOXED_FOR_FIXED_ORIENTATION;
@@ -95,6 +99,9 @@ import android.os.SystemClock;
 import android.os.Trace;
 import android.os.incremental.IncrementalManager;
 import android.util.ArrayMap;
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+import android.util.BoostFramework;
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
 import android.util.EventLog;
 import android.util.Log;
 import android.util.Slog;
@@ -103,6 +110,7 @@ import android.util.TimeUtils;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.MetricsLogger;
+import com.android.internal.protolog.ProtoLog;
 import com.android.internal.util.FrameworkStatsLog;
 import com.android.internal.util.LatencyTracker;
 import com.android.internal.util.function.pooled.PooledLambda;
@@ -113,7 +121,17 @@ import com.android.server.apphibernation.AppHibernationService;
 
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
+//T-HUB Core[SPD]:added for dexopt by yufeng.liu 2024.12.01 start
+import com.transsion.hubcore.router.ITranPeformanceRouter;
+//T-HUB Core[SPD]:added for dexopt by yufeng.liu 2024.12.01 end
 
+//SPD: add for aegean by yunjun.yang at 20241105 start
+import com.transsion.hubcore.server.wm.ITranTransitionInfoProxy;
+import com.transsion.hubcore.server.wm.ITranActivityMetricsLogger;
+//SPD: add for aegean by yunjun.yang at 20241105 start
+//[SPD] added by randong.nie for Memfusion22 20230529 start
+import com.transsion.hubcore.memfusion.ITranMemfusionFeature;
+//[SPD] added by randong.nie for Memfusion22 20230529 end
 /**
  * Listens to activity launches, transitions, visibility changes and window drawn callbacks to
  * determine app launch times and draw delays. Source of truth for activity metrics and provides
@@ -184,6 +202,16 @@ class ActivityMetricsLogger {
     private ArtManagerInternal mArtManagerInternal;
     private final StringBuilder mStringBuilder = new StringBuilder();
 
+// QTI_BEGIN: 2019-05-01: Performance: IOP: Fix and rebase PreferredApps.
+    public static BoostFramework mUxPerf = new BoostFramework();
+// QTI_END: 2019-05-01: Performance: IOP: Fix and rebase PreferredApps.
+// QTI_BEGIN: 2021-06-14: Performance: BoostFramework: Fix the broken Displayed activity hint.
+    public static BoostFramework mPerfBoost = new BoostFramework();
+// QTI_END: 2021-06-14: Performance: BoostFramework: Fix the broken Displayed activity hint.
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+    private static ActivityRecord mLaunchedActivity;
+
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
     /**
      * Due to the global single concurrent launch sequence, all calls to this observer must be made
      * in-order on the same thread to fulfill the "happens-before" guarantee in LaunchObserver.
@@ -388,6 +416,14 @@ class ActivityMetricsLogger {
                 return;
             }
             if (mLastLaunchedActivity != null) {
+                if (mLastLaunchedActivity.mLaunchCookie != null) {
+                    ProtoLog.v(WM_DEBUG_WINDOW_TRANSITIONS,
+                            "Transferring launch cookie=%s from=%s(%d) to=%s(%d)",
+                            mLastLaunchedActivity.mLaunchCookie,
+                            mLastLaunchedActivity.packageName,
+                            System.identityHashCode(mLastLaunchedActivity), r.packageName,
+                            System.identityHashCode(r));
+                }
                 // Transfer the launch cookie and launch root task because it is a consecutive
                 // launch event.
                 r.mLaunchCookie = mLastLaunchedActivity.mLaunchCookie;
@@ -603,6 +639,19 @@ class ActivityMetricsLogger {
         return null;
     }
 
+    /** SDD: add by shuqin.dong for performance startup 20250206 start */
+    public void notifyStartActivityBegin(Intent intent, String str){
+        if ((( "com.transsion.hilauncher".equals(str)) || ( "com.transsion.XOSLauncher".equals(str)))
+                && intent != null && intent.getComponent() != null){
+            Trace.asyncTraceBegin(64, "Transsion-start " + intent.getComponent().getPackageName() , -1);
+            //T-HUB Core[SPD]:added for aegean by yunjun.yang 20250419 start
+            ITranActivityMetricsLogger.Instance().hookResponseTimeDelay(
+                    intent.getComponent().getPackageName(), true, "Transsion-start");
+            //T-HUB Core[SPD]:added for aegean by yunjun.yang 20250419 end
+        }
+    }
+    /** SDD: add by shuqin.dong for performance startup 20250206 end */
+
     /**
      * This method should be only used by starting recents and starting from recents, or internal
      * tests. Because it doesn't lookup caller and always creates a new launching state.
@@ -758,6 +807,11 @@ class ActivityMetricsLogger {
             // As abort for no process switch.
             launchObserverNotifyIntentFailed(newInfo.mLaunchingState.mStartUptimeNs);
         }
+        if (Intent.ACTION_PROCESS_TEXT.equals(newInfo.mLastLaunchedActivity.intent.getAction())) {
+            mLoggerHandler.post(PooledLambda.obtainRunnable(FrameworkStatsLog::write,
+                    FrameworkStatsLog.PROCESS_TEXT_ACTION_LAUNCHED_REPORTED,
+                    launchedActivity.launchedFromUid, launchedActivity.getUid()));
+        }
         scheduleCheckActivityToBeDrawnIfSleeping(launchedActivity);
 
         // If the previous transitions are no longer visible, abort them to avoid counting the
@@ -778,11 +832,12 @@ class ActivityMetricsLogger {
      */
     private void updateSplitPairLaunches(@NonNull TransitionInfo info) {
         final Task launchedActivityTask = info.mLastLaunchedActivity.getTask();
-        final Task adjacentToLaunchedTask = launchedActivityTask.getAdjacentTask();
-        if (adjacentToLaunchedTask == null) {
+        final Task launchedSplitRootTask = launchedActivityTask.getTaskWithAdjacent();
+        if (launchedSplitRootTask == null) {
             // Not a part of a split pair
             return;
         }
+
         for (int i = mTransitionInfoList.size() - 1; i >= 0; i--) {
             final TransitionInfo otherInfo = mTransitionInfoList.get(i);
             if (otherInfo == info) {
@@ -790,7 +845,9 @@ class ActivityMetricsLogger {
             }
             final Task otherTask = otherInfo.mLastLaunchedActivity.getTask();
             // The adjacent task is the split root in which activities are started
-            if (otherTask.isDescendantOf(adjacentToLaunchedTask)) {
+            final boolean isDescendantOfAdjacent = launchedSplitRootTask.forOtherAdjacentTasks(
+                    otherTask::isDescendantOf);
+            if (isDescendantOfAdjacent) {
                 if (DEBUG_METRICS) {
                     Slog.i(TAG, "Found adjacent tasks t1=" + launchedActivityTask.mTaskId
                             + " t2=" + otherTask.mTaskId);
@@ -832,8 +889,7 @@ class ActivityMetricsLogger {
         info.mWindowsDrawnDelayMs = info.calculateDelay(timestampNs);
         info.mIsDrawn = true;
         final TransitionInfoSnapshot infoSnapshot = new TransitionInfoSnapshot(info);
-        if (info.mLoggedTransitionStarting || (!r.mDisplayContent.mOpeningApps.contains(r)
-                && !r.mTransitionController.isCollecting(r))) {
+        if (info.mLoggedTransitionStarting || !r.mTransitionController.isCollecting(r)) {
             done(false /* abort */, info, "notifyWindowsDrawn", timestampNs);
         }
 
@@ -1104,6 +1160,8 @@ class ActivityMetricsLogger {
     private void logAppTransitionFinished(@NonNull TransitionInfo info, boolean isHibernating) {
         if (DEBUG_METRICS) Slog.i(TAG, "logging finished transition " + info);
 
+        mLaunchedActivity = info.mLastLaunchedActivity;
+
         // Take a snapshot of the transition info before sending it to the handler for logging.
         // This will avoid any races with other operations that modify the ActivityRecord.
         final TransitionInfoSnapshot infoSnapshot = new TransitionInfoSnapshot(info);
@@ -1230,6 +1288,11 @@ class ActivityMetricsLogger {
                     stopped, firstLaunch));
         }
 
+        //T-HUB Core[SPD]:added for dexopt by yufeng.liu 2024.12.01 start
+        ITranPeformanceRouter.Instance().postEvent("LOG_APP_TRANSITION", info.packageName, info.applicationInfo.isSystemApp(), info.applicationInfo.uid, info.type,
+                info.launchedActivityName, packageOptimizationInfo.getCompilationReason(), packageOptimizationInfo.getCompilationFilter(), currentTransitionDelayMs,
+                info.startingWindowDelayMs, info.bindApplicationDelayMs, info.windowsDrawnDelayMs);
+        //T-HUB Core[SPD]:added for dexopt by yufeng.liu 2024.12.01 end
         logAppStartMemoryStateCapture(info);
     }
 
@@ -1268,7 +1331,67 @@ class ActivityMetricsLogger {
         sb.append(info.userId);
         sb.append(": ");
         TimeUtils.formatDuration(info.windowsDrawnDelayMs, sb);
+
+// QTI_BEGIN: 2021-06-14: Performance: BoostFramework: Fix the broken Displayed activity hint.
+        if (mPerfBoost != null) {
+// QTI_END: 2021-06-14: Performance: BoostFramework: Fix the broken Displayed activity hint.
+// QTI_BEGIN: 2021-07-29: Performance: Address Null pointer exception
+            if (info.processRecord != null) {
+                mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_FIRST_DRAW, info.packageName,
+// QTI_END: 2021-07-29: Performance: Address Null pointer exception
+                    info.processRecord.getPid(), info.windowsDrawnDelayMs);
+// QTI_BEGIN: 2021-07-29: Performance: Address Null pointer exception
+            }
+// QTI_END: 2021-07-29: Performance: Address Null pointer exception
+// QTI_BEGIN: 2021-06-14: Performance: BoostFramework: Fix the broken Displayed activity hint.
+        }
+
+// QTI_END: 2021-06-14: Performance: BoostFramework: Fix the broken Displayed activity hint.
+// QTI_BEGIN: 2019-05-01: Performance: IOP: Fix and rebase PreferredApps.
+        if (mUxPerf != null) {
+// QTI_END: 2019-05-01: Performance: IOP: Fix and rebase PreferredApps.
+            if (mUxPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                mUxPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                mUxPerf.perfUXEngine_events(BoostFramework.UXE_EVENT_DISPLAYED_ACT, 0, info.packageName, info.windowsDrawnDelayMs);
+            }
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+        }
+
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
         Log.i(TAG, sb.toString());
+
+// QTI_BEGIN: 2019-05-01: Performance: IOP: Fix and rebase PreferredApps.
+        if (mUxPerf !=  null) {
+// QTI_END: 2019-05-01: Performance: IOP: Fix and rebase PreferredApps.
+// QTI_BEGIN: 2020-01-20: Performance: Changing app classification logic from manifest-based to WLC-based
+            int isGame;
+
+            if (ActivityManager.isLowRamDeviceStatic()) {
+                isGame = mLaunchedActivity.isAppInfoGame();
+            } else {
+                isGame = (mUxPerf.perfGetFeedback(BoostFramework.VENDOR_FEEDBACK_WORKLOAD_TYPE,
+                                        mLaunchedActivity.packageName) == BoostFramework.WorkloadType.GAME) ? 1 : 0;
+            }
+// QTI_END: 2020-01-20: Performance: Changing app classification logic from manifest-based to WLC-based
+// QTI_BEGIN: 2020-08-13: Performance: Fix app crashes due to PApps.
+            if (mLaunchedActivity.processName != null) {
+                if (!mLaunchedActivity.processName.equals(info.packageName)) {
+                    isGame = 1;
+                }
+            }
+// QTI_END: 2020-08-13: Performance: Fix app crashes due to PApps.
+            if (mUxPerf.board_first_api_lvl < BoostFramework.VENDOR_T_API_LEVEL &&
+                mUxPerf.board_api_lvl < BoostFramework.VENDOR_T_API_LEVEL) {
+                mUxPerf.perfUXEngine_events(BoostFramework.UXE_EVENT_GAME, 0, info.packageName, isGame);
+            }
+// QTI_BEGIN: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
+        }
+
+        if (mLaunchedActivity.mPerf != null && mLaunchedActivity.perfActivityBoostHandler > 0) {
+            mLaunchedActivity.mPerf.perfLockReleaseHandler(mLaunchedActivity.perfActivityBoostHandler);
+            mLaunchedActivity.perfActivityBoostHandler = -1;
+        }
+// QTI_END: 2019-01-29: Core: Revert "Temporarily revert am, wm, and policy servers to upstream QP1A.181202.001"
     }
 
     private void logRecentsAnimationLatency(TransitionInfo info) {
@@ -1611,7 +1734,7 @@ class ActivityMetricsLogger {
 
         int positionToLog = APP_COMPAT_STATE_CHANGED__LETTERBOX_POSITION__NOT_LETTERBOXED_POSITION;
         if (isAppCompateStateChangedToLetterboxed(state)) {
-            positionToLog = activity.mAppCompatController.getAppCompatReachabilityOverrides()
+            positionToLog = activity.mAppCompatController.getReachabilityOverrides()
                     .getLetterboxPositionForLogging();
         }
         FrameworkStatsLog.write(FrameworkStatsLog.APP_COMPAT_STATE_CHANGED,
@@ -1664,6 +1787,9 @@ class ActivityMetricsLogger {
 
     /** Starts trace for an activity is actually launching. */
     private void startLaunchTrace(@NonNull TransitionInfo info) {
+        //[SPD] added by randong.nie for Memfusion22 20230529 start
+        ITranMemfusionFeature.Instance().writeMemfusion22("1");
+        //[SPD] added by randong.nie for Memfusion22 20230529 end
         if (DEBUG_METRICS) Slog.i(TAG, "startLaunchTrace " + info);
         if (info.mLaunchingState.mTraceName == null) {
             return;
@@ -1675,6 +1801,9 @@ class ActivityMetricsLogger {
 
     /** Stops trace for the launch is completed or cancelled. */
     private void stopLaunchTrace(@NonNull TransitionInfo info) {
+        //[SPD] added by randong.nie for Memfusion22 20230529 start
+        ITranMemfusionFeature.Instance().writeMemfusion22("0");
+        //[SPD] added by randong.nie for Memfusion22 20230529 end
         if (DEBUG_METRICS) Slog.i(TAG, "stopLaunchTrace " + info);
         if (info.mLaunchTraceName == null) {
             return;
@@ -1807,4 +1936,62 @@ class ActivityMetricsLogger {
             return true;
         }
     }
+
+
+    //T-HUB Core[SPD]:added for ui aware scheduling by yunjun.yang 20240514 start
+    public static class TranTransitionInfoProxyImpl implements ITranTransitionInfoProxy {
+        private TransitionInfo mInfo = null;
+        public TranTransitionInfoProxyImpl(TransitionInfo info) {
+            mInfo = info;
+        }
+
+        @Override
+        public boolean isProcessRunning() {
+            boolean isProcuessRunning = false;
+            if(null != mInfo) {
+                isProcuessRunning = mInfo.mProcessRunning;
+            }
+            return isProcuessRunning;
+        }
+        @Override
+        public int getTransitionType() {
+            return mInfo == null ? -1 : mInfo.mTransitionType;
+        }
+        @Override
+        public String getLastLaunchedPkg() {
+            return mInfo == null || mInfo.mLastLaunchedActivity == null ?
+                    null : mInfo.mLastLaunchedActivity.packageName;
+        }
+        @Override
+        public String getLastLaunchedActivity() {
+            if (mInfo == null) {
+                return null;
+            }
+            if (mInfo.mLastLaunchedActivity == null) {
+                return null;
+            }
+            return mInfo.mLastLaunchedActivity.shortComponentName;
+        }
+        @Override
+        public int getLastLaunchedPid() {
+            if (mInfo == null) {
+                return -1;
+            }
+            if (mInfo.mLastLaunchedActivity == null) {
+                return -1;
+            }
+            return mInfo.mLastLaunchedActivity.getPid();
+        }
+        @Override
+        public String getLastLaunchedProc() {
+            if (mInfo == null) {
+                return null;
+            }
+            if (mInfo.mLastLaunchedActivity == null) {
+                return null;
+            }
+            return mInfo.mLastLaunchedActivity.processName;
+        }
+    }
+    //T-HUB Core[SPD]:added for ui aware scheduling by yunjun.yang 20240514 end
 }

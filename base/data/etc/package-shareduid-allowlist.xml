@@ -33,4 +33,76 @@ Example usage
 <config>
     <allow-package-shareduid package="android.test.settings" shareduid="android.uid.system" />
     <allow-package-shareduid package="com.android.performanceLaunch" shareduid="com.android.performanceapp.tests" />
+
+    <!--SDD: add for test tools by panminjie 20240606 start-->
+    <allow-package-shareduid package="com.tran.attools" shareduid="android.uid.phone" />
+    <allow-package-shareduid package="com.transsion.testcaserepository" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.testcaserepository.test" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.tran.audio_path" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.trs.trde" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.autotest.timezonetool" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.autotest.smoke" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.autotest.smoke.test" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.mft" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.mft.debug" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.otastep" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.otastep.test" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.alarmTool" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.alarmTool.test" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.mediatek.schpwronoff" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.mediatek.schpwronoff.test" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.emmctest" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.logdetect" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.trs.cellautoreconnection" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.trs.showserialno" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.trs.aodstresstest" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.trde" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.switchrefreshrate" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.chargerautomation" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.antututest" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.lcmstress" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.simtest.test" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.simtest" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.repair" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.nvread" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.desense" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.tranfacnv" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.android.mmitest" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.itc.autotest" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.vibratorautomation" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.letswitch" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.trs.prevent_touch_test" shareduid="android.uid.system" />
+    <!--SDD: add for test tools by panminjie 20240606 end-->
+    <!--SDD: add for test tools by yunfeng.xiao 20240617 start-->
+    <allow-package-shareduid package="com.transsion.hardwaretest" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.labtesttool" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.autotest.connectwifi" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.rebootallapp" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.autotest.systemapp" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.autotest.kit" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.WcnSelfTest" shareduid="android.uid.phone" />
+    <allow-package-shareduid package="com.transsion.telephony.selfinspectionautomatictesttool" shareduid="android.uid.system" />
+    <!--SDD: add for test tools by yunfeng.xiao 20240617 end-->
+    <!--SDD: add for flexbutton by kunyuan.yong 20240918 start-->
+    <allow-package-shareduid package="com.transsion.settings.flexbutton" shareduid="android.uid.system" />
+    <!--SDD: add for flexbutton by kunyuan.yong 20240918 end-->
+    <!--TINNO: add for Tinno test tool by wenxiang.zhang 20250104 start-->
+    <allow-package-shareduid package="com.tinno.autotesttool" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.ape.mtbf.ddr" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.ape.offlinescriptmanager" shareduid="android.uid.system" />
+    <!--TINNO: add for Tinno test tool by wenxiang.zhang 20250104 end-->
+    <!--SDD: add for test tools by han.qu 202502225 start-->
+    <allow-package-shareduid package="com.global.app.chargeautotest" shareduid="android.uid.system" />
+    <allow-package-shareduid package="com.transsion.wifireconnect" shareduid="android.uid.system" />
+    <!--SDD: add for test tools by han.qu 202502225 end-->
+    <!--SDD: add for test tools by han.qu 20250304 start-->
+    <allow-package-shareduid package="com.transsion.dtsaudio" shareduid="dts.internal.tuning" />
+    <!--SDD: add for test tools by han.qu 20250304 end-->
+    <!--SDD: add for test tools by han.qu 20250307 start-->
+    <allow-package-shareduid package="com.sgrl.zck.wificompatibilitytest" shareduid="android.uid.system" />
+    <!--SDD: add for test tools by han.qu 20250307 end-->
+
+    <!--TINNO: add for Tinno test tool by weikang.yang 20250311 start-->
+    <allow-package-shareduid package="com.ape.apetrialfeedback" shareduid="android.uid.system" />
+    <!--TINNO: add for Tinno test tool by weikang.yang 20250311 end-->
 </config>

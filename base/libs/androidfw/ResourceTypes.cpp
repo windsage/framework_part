@@ -71,6 +71,10 @@ namespace android {
 
 #define APP_PACKAGE_ID      0x7f
 #define SYS_PACKAGE_ID      0x01
+//T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 start
+// 0x05 is thub-res.apk resource ID
+#define SYS_THUB_PACKAGE_ID  0x05
+//T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 end
 
 static const bool kDebugStringPoolNoisy = false;
 static const bool kDebugXMLNoisy = false;
@@ -152,12 +156,11 @@ static void fill9patchOffsets(Res_png_9patch* patch) {
     patch->colorsOffset = patch->yDivsOffset + (patch->numYDivs * sizeof(int32_t));
 }
 
-void Res_value::copyFrom_dtoh(const Res_value& src)
-{
-    size = dtohs(src.size);
-    res0 = src.res0;
-    dataType = src.dataType;
-    data = dtohl(src.data);
+void Res_value::copyFrom_dtoh_slow(const Res_value& src) {
+  size = dtohs(src.size);
+  res0 = src.res0;
+  dataType = src.dataType;
+  data = dtohl(src.data);
 }
 
 void Res_png_9patch::deviceToFile()
@@ -290,11 +293,11 @@ static bool assertIdmapHeader(const void* idmap, size_t size) {
     }
 
     const uint32_t version = htodl(*(reinterpret_cast<const uint32_t*>(idmap) + 1));
-    if (version != ResTable::IDMAP_CURRENT_VERSION) {
+    if (version != kIdmapCurrentVersion) {
         // We are strict about versions because files with this format are
         // auto-generated and don't need backwards compatibility.
         ALOGW("idmap: version mismatch in header (is 0x%08x, expected 0x%08x)",
-                version, ResTable::IDMAP_CURRENT_VERSION);
+                version, kIdmapCurrentVersion);
         return false;
     }
     return true;
@@ -400,14 +403,18 @@ status_t parseIdmap(const void* idmap, size_t size, uint8_t* outPackageId, Keyed
         return UNKNOWN_ERROR;
     }
 
-    size -= ResTable::IDMAP_HEADER_SIZE_BYTES;
+    size_t sizeOfHeaderAndConstraints = ResTable::IDMAP_HEADER_SIZE_BYTES +
+            // This accounts for zero constraints, and hence takes only 4 bytes for
+            // the constraints count.
+            ResTable::IDMAP_CONSTRAINTS_COUNT_SIZE_BYTES;
+    size -= sizeOfHeaderAndConstraints;
     if (size < sizeof(uint16_t) * 2) {
         ALOGE("idmap: too small to contain any mapping");
         return UNKNOWN_ERROR;
     }
 
     const uint16_t* data = reinterpret_cast<const uint16_t*>(
-            reinterpret_cast<const uint8_t*>(idmap) + ResTable::IDMAP_HEADER_SIZE_BYTES);
+            reinterpret_cast<const uint8_t*>(idmap) + sizeOfHeaderAndConstraints);
 
     uint16_t targetPackageId = dtohs(*(data++));
     if (targetPackageId == 0 || targetPackageId > 255) {
@@ -2031,16 +2038,6 @@ status_t ResXMLTree::validateNode(const ResXMLTree_node* node) const
 // --------------------------------------------------------------------
 // --------------------------------------------------------------------
 
-void ResTable_config::copyFromDeviceNoSwap(const ResTable_config& o) {
-    const size_t size = dtohl(o.size);
-    if (size >= sizeof(ResTable_config)) {
-        *this = o;
-    } else {
-        memcpy(this, &o, size);
-        memset(((uint8_t*)this)+size, 0, sizeof(ResTable_config)-size);
-    }
-}
-
 /* static */ size_t unpackLanguageOrRegion(const char in[2], const char base,
         char out[4]) {
   if (in[0] & 0x80) {
@@ -2105,34 +2102,33 @@ size_t ResTable_config::unpackRegion(char region[4]) const {
     return unpackLanguageOrRegion(this->country, '0', region);
 }
 
-
-void ResTable_config::copyFromDtoH(const ResTable_config& o) {
-    copyFromDeviceNoSwap(o);
-    size = sizeof(ResTable_config);
-    mcc = dtohs(mcc);
-    mnc = dtohs(mnc);
-    density = dtohs(density);
-    screenWidth = dtohs(screenWidth);
-    screenHeight = dtohs(screenHeight);
-    sdkVersion = dtohs(sdkVersion);
-    minorVersion = dtohs(minorVersion);
-    smallestScreenWidthDp = dtohs(smallestScreenWidthDp);
-    screenWidthDp = dtohs(screenWidthDp);
-    screenHeightDp = dtohs(screenHeightDp);
+void ResTable_config::copyFromDtoH_slow(const ResTable_config& o) {
+  copyFromDeviceNoSwap(o);
+  size = sizeof(ResTable_config);
+  mcc = dtohs(mcc);
+  mnc = dtohs(mnc);
+  density = dtohs(density);
+  screenWidth = dtohs(screenWidth);
+  screenHeight = dtohs(screenHeight);
+  sdkVersion = dtohs(sdkVersion);
+  minorVersion = dtohs(minorVersion);
+  smallestScreenWidthDp = dtohs(smallestScreenWidthDp);
+  screenWidthDp = dtohs(screenWidthDp);
+  screenHeightDp = dtohs(screenHeightDp);
 }
 
-void ResTable_config::swapHtoD() {
-    size = htodl(size);
-    mcc = htods(mcc);
-    mnc = htods(mnc);
-    density = htods(density);
-    screenWidth = htods(screenWidth);
-    screenHeight = htods(screenHeight);
-    sdkVersion = htods(sdkVersion);
-    minorVersion = htods(minorVersion);
-    smallestScreenWidthDp = htods(smallestScreenWidthDp);
-    screenWidthDp = htods(screenWidthDp);
-    screenHeightDp = htods(screenHeightDp);
+void ResTable_config::swapHtoD_slow() {
+  size = htodl(size);
+  mcc = htods(mcc);
+  mnc = htods(mnc);
+  density = htods(density);
+  screenWidth = htods(screenWidth);
+  screenHeight = htods(screenHeight);
+  sdkVersion = htods(sdkVersion);
+  minorVersion = htods(minorVersion);
+  smallestScreenWidthDp = htods(smallestScreenWidthDp);
+  screenWidthDp = htods(screenWidthDp);
+  screenHeightDp = htods(screenHeightDp);
 }
 
 /* static */ inline int compareLocales(const ResTable_config &l, const ResTable_config &r) {
@@ -2145,7 +2141,7 @@ void ResTable_config::swapHtoD() {
     // systems should happen very infrequently (if at all.)
     // The comparison code relies on memcmp low-level optimizations that make it
     // more efficient than strncmp.
-    const char emptyScript[sizeof(l.localeScript)] = {'\0', '\0', '\0', '\0'};
+    static constexpr char emptyScript[sizeof(l.localeScript)] = {'\0', '\0', '\0', '\0'};
     const char *lScript = l.localeScriptWasComputed ? emptyScript : l.localeScript;
     const char *rScript = r.localeScriptWasComputed ? emptyScript : r.localeScript;
 
@@ -2623,16 +2619,14 @@ bool ResTable_config::isLocaleBetterThan(const ResTable_config& o,
 }
 
 bool ResTable_config::isBetterThanBeforeLocale(const ResTable_config& o,
-        const ResTable_config* requested) const {
-    if (requested) {
-        if (imsi || o.imsi) {
-            if ((mcc != o.mcc) && requested->mcc) {
-                return (mcc);
-            }
+        const ResTable_config& requested) const {
+    if (imsi || o.imsi) {
+        if ((mcc != o.mcc) && requested.mcc) {
+            return mcc;
+        }
 
-            if ((mnc != o.mnc) && requested->mnc) {
-                return (mnc);
-            }
+        if ((mnc != o.mnc) && requested.mnc) {
+            return mnc;
         }
     }
     return false;
@@ -5802,7 +5796,11 @@ bool ResTable::stringToValue(Res_value* outValue, String16* outString,
                 }
 
                 uint32_t packageId = Res_GETPACKAGE(rid) + 1;
-                if (packageId != APP_PACKAGE_ID && packageId != SYS_PACKAGE_ID) {
+                if (packageId != APP_PACKAGE_ID && packageId != SYS_PACKAGE_ID
+                    //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 start
+                    && packageId != SYS_THUB_PACKAGE_ID
+                    //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 end
+                      ) {
                     outValue->dataType = Res_value::TYPE_DYNAMIC_REFERENCE;
                 }
                 outValue->data = rid;
@@ -5823,7 +5821,11 @@ bool ResTable::stringToValue(Res_value* outValue, String16* outString,
                         outValue->data = rid;
                         outValue->dataType = Res_value::TYPE_DYNAMIC_REFERENCE;
                         return true;
-                    } else if (packageId == APP_PACKAGE_ID || packageId == SYS_PACKAGE_ID) {
+                    } else if (packageId == APP_PACKAGE_ID || packageId == SYS_PACKAGE_ID
+                        //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 start
+                        || packageId == SYS_THUB_PACKAGE_ID
+                        //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 end
+                        ) {
                         // We accept packageId's generated as 0x01 in order to support
                         // building the android system resources
                         outValue->data = rid;
@@ -5969,7 +5971,11 @@ bool ResTable::stringToValue(Res_value* outValue, String16* outString,
             }
 
             uint32_t packageId = Res_GETPACKAGE(rid) + 1;
-            if (packageId != APP_PACKAGE_ID && packageId != SYS_PACKAGE_ID) {
+            if (packageId != APP_PACKAGE_ID && packageId != SYS_PACKAGE_ID
+                //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 start
+                && packageId != SYS_THUB_PACKAGE_ID
+                //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 end
+                ) {
                 outValue->dataType = Res_value::TYPE_DYNAMIC_ATTRIBUTE;
             }
             outValue->data = rid;
@@ -5984,7 +5990,11 @@ bool ResTable::stringToValue(Res_value* outValue, String16* outString,
                     outValue->data = rid;
                     outValue->dataType = Res_value::TYPE_DYNAMIC_ATTRIBUTE;
                     return true;
-                } else if (packageId == APP_PACKAGE_ID || packageId == SYS_PACKAGE_ID) {
+                } else if (packageId == APP_PACKAGE_ID || packageId == SYS_PACKAGE_ID
+                    //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 start
+                    || packageId == SYS_THUB_PACKAGE_ID
+                    //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 end
+                    ) {
                     // We accept packageId's generated as 0x01 in order to support
                     // building the android system resources
                     outValue->data = rid;
@@ -6445,7 +6455,11 @@ void ResTable::forEachConfiguration(bool ignoreMipmap, bool ignoreAndroidPackage
         if (ignoreAndroidPackage && android == packageGroup->name) {
             continue;
         }
-        if (!includeSystemConfigs && packageGroup->isSystemAsset) {
+        if (!includeSystemConfigs &&  (packageGroup->isSystemAsset
+                //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 start
+                || packageGroup->id == SYS_THUB_PACKAGE_ID
+                //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 end
+                )) {
             continue;
         }
         const size_t typeCount = packageGroup->types.size();
@@ -6528,41 +6542,79 @@ base::expected<StringPiece16, NullOrIOError> StringPoolRef::string16() const {
 }
 
 bool ResTable::getResourceFlags(uint32_t resID, uint32_t* outFlags) const {
-    if (mError != NO_ERROR) {
-        return false;
-    }
+  if (mError != NO_ERROR) {
+    return false;
+  }
 
-    const ssize_t p = getResourcePackageIndex(resID);
-    const int t = Res_GETTYPE(resID);
-    const int e = Res_GETENTRY(resID);
+  const ssize_t p = getResourcePackageIndex(resID);
+  const int t = Res_GETTYPE(resID);
+  const int e = Res_GETENTRY(resID);
 
-    if (p < 0) {
-        if (Res_GETPACKAGE(resID)+1 == 0) {
-            ALOGW("No package identifier when getting flags for resource number 0x%08x", resID);
-        } else {
-            ALOGW("No known package when getting flags for resource number 0x%08x", resID);
-        }
-        return false;
+  if (p < 0) {
+    if (Res_GETPACKAGE(resID)+1 == 0) {
+      ALOGW("No package identifier when getting flags for resource number 0x%08x", resID);
+    } else {
+      ALOGW("No known package when getting flags for resource number 0x%08x", resID);
     }
-    if (t < 0) {
-        ALOGW("No type identifier when getting flags for resource number 0x%08x", resID);
-        return false;
-    }
+    return false;
+  }
+  if (t < 0) {
+    ALOGW("No type identifier when getting flags for resource number 0x%08x", resID);
+    return false;
+  }
 
-    const PackageGroup* const grp = mPackageGroups[p];
-    if (grp == NULL) {
-        ALOGW("Bad identifier when getting flags for resource number 0x%08x", resID);
-        return false;
-    }
+  const PackageGroup* const grp = mPackageGroups[p];
+  if (grp == NULL) {
+    ALOGW("Bad identifier when getting flags for resource number 0x%08x", resID);
+    return false;
+  }
 
-    Entry entry;
-    status_t err = getEntry(grp, t, e, NULL, &entry);
-    if (err != NO_ERROR) {
-        return false;
-    }
+  Entry entry;
+  status_t err = getEntry(grp, t, e, NULL, &entry);
+  if (err != NO_ERROR) {
+    return false;
+  }
 
-    *outFlags = entry.specFlags;
-    return true;
+  *outFlags = entry.specFlags;
+  return true;
+}
+
+bool ResTable::getResourceEntryFlags(uint32_t resID, uint32_t* outFlags) const {
+  if (mError != NO_ERROR) {
+    return false;
+  }
+
+  const ssize_t p = getResourcePackageIndex(resID);
+  const int t = Res_GETTYPE(resID);
+  const int e = Res_GETENTRY(resID);
+
+  if (p < 0) {
+    if (Res_GETPACKAGE(resID)+1 == 0) {
+      ALOGW("No package identifier when getting flags for resource number 0x%08x", resID);
+    } else {
+      ALOGW("No known package when getting flags for resource number 0x%08x", resID);
+    }
+    return false;
+  }
+  if (t < 0) {
+    ALOGW("No type identifier when getting flags for resource number 0x%08x", resID);
+    return false;
+  }
+
+  const PackageGroup* const grp = mPackageGroups[p];
+  if (grp == NULL) {
+    ALOGW("Bad identifier when getting flags for resource number 0x%08x", resID);
+    return false;
+  }
+
+  Entry entry;
+  status_t err = getEntry(grp, t, e, NULL, &entry);
+  if (err != NO_ERROR) {
+    return false;
+  }
+
+  *outFlags = entry.entry->flags();
+  return true;
 }
 
 bool ResTable::isPackageDynamic(uint8_t packageID) const {
@@ -7159,6 +7211,9 @@ DynamicRefTable::DynamicRefTable(uint8_t packageId, bool appAsLib)
     // Reserved package ids
     mLookupTable[APP_PACKAGE_ID] = APP_PACKAGE_ID;
     mLookupTable[SYS_PACKAGE_ID] = SYS_PACKAGE_ID;
+    //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 start
+    mLookupTable[SYS_THUB_PACKAGE_ID] = SYS_THUB_PACKAGE_ID;
+    //T-HUB core[SDD]: add decoupling framework by lijia.chen 20220506 end
 }
 
 status_t DynamicRefTable::load(const ResTable_lib_header* const header)
@@ -7492,7 +7547,7 @@ status_t ResTable::createIdmap(const ResTable& targetResTable,
     // write idmap header
     uint32_t* data = reinterpret_cast<uint32_t*>(*outData);
     *data++ = htodl(IDMAP_MAGIC); // write: magic
-    *data++ = htodl(ResTable::IDMAP_CURRENT_VERSION); // write: version
+    *data++ = htodl(kIdmapCurrentVersion); // write: version
     *data++ = htodl(targetCrc); // write: target crc
     *data++ = htodl(overlayCrc); // write: overlay crc
 
@@ -7506,6 +7561,9 @@ status_t ResTable::createIdmap(const ResTable& targetResTable,
         *charData++ = i < pathLen ? overlayPath[i] : '\0'; // write: overlay path
     }
     data += (2 * 256) / sizeof(uint32_t);
+
+    // write zero constraints count (no constraints)
+    *data++ = htodl(0);
 
     // write idmap data header
     uint16_t* typeData = reinterpret_cast<uint16_t*>(data);

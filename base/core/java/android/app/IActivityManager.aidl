@@ -403,8 +403,8 @@ interface IActivityManager {
     void setPackageScreenCompatMode(in String packageName, int mode);
     @UnsupportedAppUsage
     boolean switchUser(int userid);
-    String getSwitchingFromUserMessage();
-    String getSwitchingToUserMessage();
+    String getSwitchingFromUserMessage(int userId);
+    String getSwitchingToUserMessage(int userId);
     @UnsupportedAppUsage
     void setStopUserOnSwitch(int value);
     boolean removeTask(int taskId);
@@ -1038,4 +1038,25 @@ interface IActivityManager {
      */
     @EnforcePermission("INTERACT_ACROSS_USERS_FULL")
     IBinder refreshIntentCreatorToken(in Intent intent);
+
+    //SPD: Add for uias by yunjun.yang 20241204 start
+    boolean updateUiasStatus(String pkg, int tid, String threadName, String tagName, boolean isAddTag);
+    //SPD: Add for uias by yunjun.yang 20241204 end
+    //SPD: Add for uias by yunjun.yang 20241204 start
+    List<String> getVisPkgInScreen();
+    int isVisPkgInScreen(String pkg);
+    //SPD: Add for uias by yunjun.yang 20241204 end
+    //SPD: add XLBYYHBWQ-3103 for MemFusion2.0 by yuling.fu at 20230510 start
+    int setMemFusionEnable(boolean enable);
+    void compactAppFullForced(String appName, int uid);
+    void switchMemFusion(boolean enable);
+    boolean isUxCompactionSupport();
+    void switchUXCompaction(boolean enable);
+    void changeCompactionMem(String meminfo);
+    List<String> getSwapFileSizeList();
+    int isMemoryEnoughToMF(String memFusionSize);
+    int getMemoryForMF(String memFusionSize);
+    boolean isMatchCurMemSelection();
+    boolean isMemSettingEnterEnabled();
+    //SPD: add XLBYYHBWQ-3103 for MemFusion2.0 by yuling.fu at 20230510 end
 }

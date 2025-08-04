@@ -22,6 +22,9 @@
 #include <utils/Log.h>
 #include <binder/IPCThreadState.h>
 #include <binder/IServiceManager.h>
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+#include <cutils/properties.h>
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
 #include <utils/String8.h>
 #include <utils/Vector.h>
 #include <meminfo/procmeminfo.h>
@@ -62,6 +65,9 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+//SPD: add cgourp control for ADJHBSY-7559 by sifeng.tian 20231127 start
+#include <sched.h>
+//SPD: add cgourp control for ADJHBSY-7559 by sifeng.tian 20231127 end
 
 #define GUARD_THREAD_PRIORITY 0
 
@@ -213,12 +219,87 @@ void android_os_Process_setThreadGroup(JNIEnv* env, jobject clazz, int tid, jint
         return;
     }
 
+    SchedPolicy sp = (SchedPolicy) grp;
     int res = SetTaskProfiles(tid, {get_sched_policy_profile_name((SchedPolicy)grp)}, true) ? 0 : -1;
 
     if (res != NO_ERROR) {
         signalExceptionForGroupError(env, -res, tid);
     }
+// QTI_BEGIN: 2018-08-21: Audio: Process: Use audio-app cpuset if available
+
+    if ((grp == SP_AUDIO_APP) || (grp == SP_AUDIO_SYS)) {
+        res = set_cpuset_policy(tid, sp);
+        if (res != NO_ERROR) {
+            signalExceptionForGroupError(env, -res, tid);
+        }
+    }
+// QTI_END: 2018-08-21: Audio: Process: Use audio-app cpuset if available
 }
+
+//SPD: add boost_cpu for ADJHBSY-7559 by fan.feng1 20221028 start
+void android_os_Process_setThreadGroupAndAnimBoost(JNIEnv* env, jobject clazz, int tid)
+{
+    ALOGV("%s tid=%d" PRId32, __func__, tid);
+    int res = SetTaskProfiles(tid, {"CPUSET_SP_ANIMBOOST"}, true) ? 0 : -1;
+    if (res != NO_ERROR) {
+        signalExceptionForGroupError(env, -res, tid);
+    }
+}
+//SPD: add boost_cpu for ADJHBSY-7559 by fan.feng1 20221028 end
+//SPD: add cgourp control for ADJHBSY-7559 by sifeng.tian 20231127 start
+void android_os_Process_setThreadGroupByProfiles(JNIEnv* env, jobject clazz, int tid, jobjectArray profiles)
+{
+    ALOGV("%s tid=%d" PRId32, __func__, tid);
+    if (profiles == NULL || tid == 0) {
+        jniThrowNullPointerException(env, NULL);
+        return;
+    }
+    int i;
+    std::vector<std::string> taget_profiles;
+    jsize count = env->GetArrayLength(profiles);
+    for (i = 0; i < count; i++) {
+        jobject obj = env->GetObjectArrayElement(profiles, i);
+        if (obj != NULL) {
+            const char* str = env->GetStringUTFChars((jstring)obj, NULL);
+            ALOGI("String at %d: %p = %s", i, obj, str);
+            if (str == NULL) {
+                jniThrowNullPointerException(env, "Element in reqFields");
+                return;
+            }
+            taget_profiles.push_back(std::string(str));
+            env->ReleaseStringUTFChars((jstring)obj, str);
+        } else {
+            jniThrowNullPointerException(env, "Element in reqFields");
+            return;
+        }
+    }
+    int res = SetTaskProfiles(tid, taget_profiles, false) ? 0 : -1;
+    if (res != NO_ERROR) {
+        signalExceptionForGroupError(env, -res, tid);
+    }
+}
+void android_os_Process_setThreadAffinity(JNIEnv* env, jobject clazz, int pid, int cpuMask)
+{
+    ALOGV("%s tid=%d mask=%d" PRId32, __func__, pid, cpuMask);
+    if (pid == 0 || cpuMask <= 0 || cpuMask > 255) {
+        jniThrowNullPointerException(env, NULL);
+        return;
+    }
+    {
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        for (int i=0; i<8; i++) {
+            if (cpuMask & (1<<i)) {
+                CPU_SET(i, &mask);
+            }
+        }
+        int ret = sched_setaffinity(pid, sizeof(mask), &mask);
+        if(ret < 0){
+            signalExceptionForGroupError(env, EINVAL, pid);
+        }
+    }
+}
+//SPD: add cgourp control for ADJHBSY-7559 by sifeng.tian 20231127 end
 
 void android_os_Process_setThreadGroupAndCpuset(JNIEnv* env, jobject clazz, int tid, jint grp)
 {
@@ -311,14 +392,128 @@ void android_os_Process_setProcessGroup(JNIEnv* env, jobject clazz, int pid, jin
         signalExceptionForGroupError(env, errno ? errno : EPERM, pid);
 }
 
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+void android_os_Process_setCgroupProcsProcessGroup(JNIEnv* env, jobject clazz, int uid, int pid, jint grp, jboolean dex2oat_only)
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+{
+    int fd;
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2021-05-20: Performance: add support read cgroup.procs from cgroup V2 path
+    char pathV1[255], pathV2[255];
+    static bool isCgroupV2 = false;
+// QTI_END: 2021-05-20: Performance: add support read cgroup.procs from cgroup V2 path
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+    if ((grp == SP_FOREGROUND) || (grp > SP_MAX)) {
+        signalExceptionForGroupError(env, EINVAL, pid);
+        return;
+    }
+
+    //set process group for current process
+    android_os_Process_setProcessGroup(env, clazz, pid, grp);
+
+    //find processes in the same cgroup.procs of current uid and pid
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2021-05-20: Performance: add support read cgroup.procs from cgroup V2 path
+    snprintf(pathV1, sizeof(pathV1), "/acct/uid_%d/pid_%d/cgroup.procs", uid, pid);
+    snprintf(pathV2, sizeof(pathV2), "/sys/fs/cgroup/uid_%d/pid_%d/cgroup.procs", uid, pid);
+    if (isCgroupV2) {
+        // read from V2 only
+        fd = open(pathV2, O_RDONLY);
+    } else {
+        // first try V1
+        fd = open(pathV1, O_RDONLY);
+        if (fd < 0) {
+            fd = open(pathV2, O_RDONLY);
+            if (fd >= 0) {
+                isCgroupV2 = true;
+            }
+        }
+    }
+// QTI_END: 2021-05-20: Performance: add support read cgroup.procs from cgroup V2 path
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+    if (fd >= 0) {
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+        char buffer[256];
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+        char ch;
+        int numRead;
+        size_t len=0;
+        for (;;) {
+            numRead=read(fd, &ch, 1);
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+            if (numRead <= 0)
+                break;
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+            if (ch != '\n') {
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+                buffer[len++] = ch;
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+            } else {
+                int temp_pid = atoi(buffer);
+                len=0;
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+                if (temp_pid == pid)
+                    continue;
+                if (dex2oat_only) {
+                    // check if cmdline of temp_pid is dex2oat
+                    char cmdline[64];
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+                    snprintf(cmdline, sizeof(cmdline), "/proc/%d/cmdline", temp_pid);
+                    int cmdline_fd = open(cmdline, O_RDONLY);
+                    if (cmdline_fd >= 0) {
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+                        size_t read_size = read(cmdline_fd, buffer, 255);
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+                        close(cmdline_fd);
+                        buffer[read_size]='\0';
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+                        const char *dex2oat_name1 = "dex2oat"; //for plugins compiler
+                        const char *dex2oat_name2 = "/system/bin/dex2oat"; //for installer
+                        const char *dex2oat_name3 = "/apex/com.android.runtime/bin/dex2oat"; //for installer
+                        if (strncmp(buffer, dex2oat_name1, strlen(dex2oat_name1)) != 0
+                                && strncmp(buffer, dex2oat_name2, strlen(dex2oat_name2)) != 0
+                                && strncmp(buffer, dex2oat_name3, strlen(dex2oat_name3)) != 0) {
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+                            continue;
+                        }
+                    } else {
+                        //ALOGE("read %s failed", cmdline);
+                        continue;
+                    }
+                }
+                //set cgroup of temp_pid follow pid
+                android_os_Process_setProcessGroup(env, clazz, temp_pid, grp);
+            }
+        }
+        close(fd);
+    }
+}
+
+// QTI_END: 2018-04-19: Performance: Ensure cgroup.procs in the same cgroup
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
 void android_os_Process_setProcessFrozen(
         JNIEnv *env, jobject clazz, jint pid, jint uid, jboolean freeze)
 {
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
     if (uid < 0) {
         jniThrowExceptionFmt(env, "java/lang/IllegalArgumentException", "uid is negative: %d", uid);
         return;
     }
 
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
     bool success = true;
 
     if (freeze) {
@@ -332,6 +527,7 @@ void android_os_Process_setProcessFrozen(
     }
 }
 
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
 jint android_os_Process_getProcessGroup(JNIEnv* env, jobject clazz, jint pid)
 {
     SchedPolicy sp;
@@ -398,8 +594,25 @@ static void get_cpuset_cores_for_policy(SchedPolicy policy, cpu_set_t *cpu_set)
             }
             break;
         case SP_FOREGROUND:
+            if (!CgroupGetAttributePath("HighCapacityCPUs", &filename)) {
+                return;
+            }
+// QTI_BEGIN: 2018-08-21: Audio: Process: Use audio-app cpuset if available
+            break;
+// QTI_END: 2018-08-21: Audio: Process: Use audio-app cpuset if available
         case SP_AUDIO_APP:
         case SP_AUDIO_SYS:
+            if (!CgroupGetAttributePath("AudioAppCapacityCPUs", &filename)) {
+                return;
+            }
+            if (access(filename.c_str(), F_OK) != 0) {
+                if (!CgroupGetAttributePath("HighCapacityCPUs", &filename)) {
+                    return;
+                }
+// QTI_BEGIN: 2018-08-21: Audio: Process: Use audio-app cpuset if available
+            }
+            break;
+// QTI_END: 2018-08-21: Audio: Process: Use audio-app cpuset if available
         case SP_RT_APP:
             if (!CgroupGetAttributePath("HighCapacityCPUs", &filename)) {
                 return;
@@ -488,6 +701,28 @@ jintArray android_os_Process_getExclusiveCores(JNIEnv* env, jobject clazz) {
 
     env->ReleaseIntArrayElements(cpus, cpu_elements, 0);
     return cpus;
+}
+
+jlongArray android_os_Process_getSchedAffinity(JNIEnv* env, jobject clazz, jint pid) {
+    // sched_getaffinity will do memset 0 for the unset bits within set_alloc_size_byte
+    cpu_set_t cpu_set;
+    if (sched_getaffinity(pid, sizeof(cpu_set_t), &cpu_set) != 0) {
+        signalExceptionForError(env, errno, pid);
+        return nullptr;
+    }
+    int cpu_cnt = std::min(CPU_SETSIZE, get_nprocs_conf());
+    int masks_len = (int)(CPU_ALLOC_SIZE(cpu_cnt) / sizeof(__CPU_BITTYPE));
+    jlongArray masks = env->NewLongArray(masks_len);
+    if (masks == nullptr) {
+        jniThrowException(env, "java/lang/OutOfMemoryError", nullptr);
+        return nullptr;
+    }
+    jlong* mask_elements = env->GetLongArrayElements(masks, 0);
+    for (int i = 0; i < masks_len; i++) {
+        mask_elements[i] = cpu_set.__bits[i];
+    }
+    env->ReleaseLongArrayElements(masks, mask_elements, 0);
+    return masks;
 }
 
 static void android_os_Process_setCanSelfBackground(JNIEnv* env, jobject clazz, jboolean bgOk) {
@@ -1365,11 +1600,22 @@ static const JNINativeMethod methods[] = {
         {"getThreadPriority", "(I)I", (void*)android_os_Process_getThreadPriority},
         {"getThreadScheduler", "(I)I", (void*)android_os_Process_getThreadScheduler},
         {"setThreadGroup", "(II)V", (void*)android_os_Process_setThreadGroup},
+        //SPD: add boost_cpu for ADJHBSY-7559 by fan.feng1 20221028 start
+        {"setThreadGroupAndAnimboost", "(I)V", (void*)android_os_Process_setThreadGroupAndAnimBoost},
+        //SPD: add boost_cpu for ADJHBSY-7559 by fan.feng1 20221028 end
+        //SPD: add cgourp control for ADJHBSY-7559 by sifeng.tian 20231127 start
+        {"setThreadGroupByProfiles", "(I[Ljava/lang/String;)V", (void*)android_os_Process_setThreadGroupByProfiles},
+        {"setThreadAffinity", "(II)V", (void*)android_os_Process_setThreadAffinity},
+        //SPD: add cgourp control for ADJHBSY-7559 by sifeng.tian 20231127 end
         {"setThreadGroupAndCpuset", "(II)V", (void*)android_os_Process_setThreadGroupAndCpuset},
         {"setProcessGroup", "(II)V", (void*)android_os_Process_setProcessGroup},
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+        {"setCgroupProcsProcessGroup", "(IIIZ)V", (void*)android_os_Process_setCgroupProcsProcessGroup},
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
         {"getProcessGroup", "(I)I", (void*)android_os_Process_getProcessGroup},
         {"createProcessGroup", "(II)I", (void*)android_os_Process_createProcessGroup},
         {"getExclusiveCores", "()[I", (void*)android_os_Process_getExclusiveCores},
+        {"getSchedAffinity", "(I)[J", (void*)android_os_Process_getSchedAffinity},
         {"setArgV0Native", "(Ljava/lang/String;)V", (void*)android_os_Process_setArgV0},
         {"setUid", "(I)I", (void*)android_os_Process_setUid},
         {"setGid", "(I)I", (void*)android_os_Process_setGid},

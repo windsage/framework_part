@@ -57,6 +57,9 @@ static const size_t kPageMask = ~(kPageSize - 1);
 
 #define COMPACT_ACTION_FILE_FLAG 1
 #define COMPACT_ACTION_ANON_FLAG 2
+//SPD: modify XLBYYHBWQ-3103 for MemFusion2.1 by lynn.fu at 20230510 start
+#define COMPACT_ACTION_MEMFUSION_FLAG 11
+//SPD: modify XLBYYHBWQ-3103 for MemFusion2.1 by lynn.fu at 20230510 end
 
 using VmaToAdviseFunc = std::function<int(const Vma&)>;
 using android::base::unique_fd;
@@ -76,13 +79,19 @@ using android::base::unique_fd;
 
 // Selected a high enough number to avoid clashing with linux errno codes
 #define ERROR_COMPACTION_CANCELLED -1000
-
+//SPD:add for kernel5.x by yuling.fu 20230117 start
+#define MADV_MEMFUSION 22
+//SPD:add for kernel5.x by yuling.fu 20230117 end
 namespace android {
 
 // Signal happening in separate thread that would bail out compaction
 // before starting next VMA batch
 static std::atomic<bool> cancelRunningCompaction;
 
+// QTI_BEGIN: 2023-03-15: Performance: CachedAppOptimizer : Pageout File pages during system compaction
+static bool inSystemCompaction = false;
+
+// QTI_END: 2023-03-15: Performance: CachedAppOptimizer : Pageout File pages during system compaction
 // A VmaBatch represents a set of VMAs that can be processed
 // as VMAs are processed by client code it is expected that the
 // VMAs get consumed which means they are discarded as they are
@@ -333,17 +342,32 @@ static int getAnonPageAdvice(const Vma& vma) {
     bool hasReadFlag = (vma.flags & PROT_READ) > 0;
     bool hasWriteFlag = (vma.flags & PROT_WRITE) > 0;
     bool hasExecuteFlag = (vma.flags & PROT_EXEC) > 0;
-    if ((hasReadFlag || hasWriteFlag) && !hasExecuteFlag && !vma.is_shared) {
+    if ((hasReadFlag || hasWriteFlag) && !hasExecuteFlag ) {
         return MADV_PAGEOUT;
     }
     return -1;
 }
 static int getAnyPageAdvice(const Vma& vma) {
+// QTI_BEGIN: 2023-03-15: Performance: CachedAppOptimizer : Pageout File pages during system compaction
+    if (inSystemCompaction == true) {
+        return MADV_PAGEOUT;
+    }
+
+// QTI_END: 2023-03-15: Performance: CachedAppOptimizer : Pageout File pages during system compaction
     if (vma.inode == 0 && !vma.is_shared) {
         return MADV_PAGEOUT;
     }
     return MADV_COLD;
 }
+
+//SPD:add for kernel5.x by yuling.fu 20230117 start
+    static int getMemfusionPageAdvice(const Vma& vma) {
+        if (vma.inode == 0 && !vma.is_shared) {
+            return MADV_MEMFUSION;
+        }
+        return MADV_COLD;
+    }
+//SPD:add for kernel5.x by yuling.fu 20230117 end
 
 // Perform a full process compaction using process_madvise syscall
 // using the madvise behavior defined by vmaToAdviseFunc per VMA.
@@ -361,10 +385,13 @@ static int64_t compactProcess(int pid, VmaToAdviseFunc vmaToAdviseFunc) {
     static std::string mapsBuffer;
     ATRACE_BEGIN("CollectVmas");
     ProcMemInfo meminfo(pid);
-    static std::vector<Vma> pageoutVmas(2000), coldVmas(2000);
+    //SPD:add for kernel5.x by yuling.fu 20230117 start
+    static std::vector<Vma> pageoutVmas(2000), coldVmas(2000), memfusionVmas(2000);
     int coldVmaIndex = 0;
     int pageoutVmaIndex = 0;
-    auto vmaCollectorCb = [&vmaToAdviseFunc, &pageoutVmaIndex, &coldVmaIndex](const Vma& vma) {
+    int memfusionVmaIndex = 0;
+    //SPD:add for kernel5.x by yuling.fu 20230117 end
+    auto vmaCollectorCb = [&vmaToAdviseFunc, &pageoutVmaIndex, &coldVmaIndex, &memfusionVmaIndex](const Vma& vma) {
         int advice = vmaToAdviseFunc(vma);
         switch (advice) {
             case MADV_COLD:
@@ -386,6 +413,14 @@ static int64_t compactProcess(int pid, VmaToAdviseFunc vmaToAdviseFunc) {
                 }
                 ++pageoutVmaIndex;
                 break;
+            case MADV_MEMFUSION:
+                if (memfusionVmaIndex < memfusionVmas.size()) {
+                    memfusionVmas[memfusionVmaIndex] = vma;
+                } else {
+                    memfusionVmas.push_back(vma);
+                }
+                ++memfusionVmaIndex;
+                break;
         }
         return true;
     };
@@ -395,7 +430,13 @@ static int64_t compactProcess(int pid, VmaToAdviseFunc vmaToAdviseFunc) {
     ALOGE("Total VMAs sent for compaction anon=%d file=%d", pageoutVmaIndex,
             coldVmaIndex);
 #endif
-
+    int64_t memfusionBytes = compactMemory(memfusionVmas, pid, MADV_PAGEOUT, pageoutVmaIndex);
+    if (memfusionBytes < 0) {
+        // Error, just forward it.
+        cancelRunningCompaction.store(false);
+        return memfusionBytes;
+    }
+    //SPD:add for kernel5.x by yuling.fu 20230117 end
     int64_t pageoutBytes = compactMemory(pageoutVmas, pid, MADV_PAGEOUT, pageoutVmaIndex);
     if (pageoutBytes < 0) {
         // Error, just forward it.
@@ -420,14 +461,25 @@ static void compactProcessOrFallback(int pid, int compactionFlags) {
 
     bool compactAnon = compactionFlags & COMPACT_ACTION_ANON_FLAG;
     bool compactFile = compactionFlags & COMPACT_ACTION_FILE_FLAG;
-
+    //SPD:add for kernel5.x by yuling.fu 20230117 start
+    bool compactMemfusion = (compactionFlags == COMPACT_ACTION_MEMFUSION_FLAG) ? true : false;
+    //SPD:add for kernel5.x by yuling.fu 20230117 end
     // Set when the system does not support process_madvise syscall to avoid
     // gathering VMAs in subsequent calls prior to falling back to procfs
     static bool shouldForceProcFs = false;
+// QTI_BEGIN: 2023-12-18: Performance: CachedAppOptimizer: prefer use ppr if available
+    static std::once_flag checkProcFsFlag;
+
+// QTI_END: 2023-12-18: Performance: CachedAppOptimizer: prefer use ppr if available
     std::string compactionType;
     VmaToAdviseFunc vmaToAdviseFunc;
 
-    if (compactAnon) {
+    //SPD:add for kernel5.x by yuling.fu 20230117 start
+    if (compactMemfusion) {
+        compactionType = "memfusion";
+        vmaToAdviseFunc = getMemfusionPageAdvice;
+        //SPD:add for kernel5.x by yuling.fu 20230117 end
+    } else if (compactAnon) {
         if (compactFile) {
             compactionType = "all";
             vmaToAdviseFunc = getAnyPageAdvice;
@@ -440,6 +492,18 @@ static void compactProcessOrFallback(int pid, int compactionFlags) {
         vmaToAdviseFunc = getFilePageAdvice;
     }
 
+// QTI_BEGIN: 2023-12-18: Performance: CachedAppOptimizer: prefer use ppr if available
+    // check once if per-process reclaim available
+    // we don't need to carry it forward once Kernel 5.4 becomes obsolete
+    std::call_once(checkProcFsFlag, []() {
+        FILE *fp = fopen("/proc/self/reclaim", "w");
+        if (fp != NULL) {
+            fclose(fp);
+            shouldForceProcFs = true;
+        }
+    });
+
+// QTI_END: 2023-12-18: Performance: CachedAppOptimizer: prefer use ppr if available
     if (shouldForceProcFs || compactProcess(pid, vmaToAdviseFunc) == -ENOSYS) {
         shouldForceProcFs = true;
         compactProcessProcfs(pid, compactionType);
@@ -455,6 +519,9 @@ static void compactProcessOrFallback(int pid, int compactionFlags) {
 static void com_android_server_am_CachedAppOptimizer_compactSystem(JNIEnv *, jobject) {
     std::unique_ptr<DIR, decltype(&closedir)> proc(opendir("/proc"), closedir);
     struct dirent* current;
+// QTI_BEGIN: 2023-03-15: Performance: CachedAppOptimizer : Pageout File pages during system compaction
+    inSystemCompaction = true;
+// QTI_END: 2023-03-15: Performance: CachedAppOptimizer : Pageout File pages during system compaction
     while ((current = readdir(proc.get()))) {
         if (current->d_type != DT_DIR) {
             continue;
@@ -483,6 +550,9 @@ static void com_android_server_am_CachedAppOptimizer_compactSystem(JNIEnv *, job
 
         compactProcessOrFallback(pid, COMPACT_ACTION_ANON_FLAG | COMPACT_ACTION_FILE_FLAG);
     }
+// QTI_BEGIN: 2023-03-15: Performance: CachedAppOptimizer : Pageout File pages during system compaction
+    inSystemCompaction = false;
+// QTI_END: 2023-03-15: Performance: CachedAppOptimizer : Pageout File pages during system compaction
 }
 
 static void com_android_server_am_CachedAppOptimizer_cancelCompaction(JNIEnv*, jobject) {

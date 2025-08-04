@@ -452,11 +452,29 @@ public class StackTracesDumpHelper {
     }
 
     private static synchronized File createAnrDumpFile(File tracesDir) throws IOException {
+        //SDD:modify AR-202507-001390 by huan.liu5 2025/07/14  start
+        if(null != tracesDir){
+            File[] traceList = tracesDir.listFiles();
+            if(null!=traceList && traceList.length >= 12){
+                for (File file : traceList) {
+                    String fileName = file.getName();
+                    if(fileName.startsWith("anr_") || fileName.startsWith("dumptrace_") || fileName.startsWith("trace_")){
+                        if(!file.delete()){
+                            Slog.d(TAG,"failed to delete anr trace!!!!!");
+                        }
+                    }
+                }
+            }
+        }
+        //SDD:modify AR-202507-001390 by huan.liu5 2025/07/14  end
         final String formattedDate = ANR_FILE_DATE_FORMAT.format(new Date());
         final File anrFile = new File(tracesDir, ANR_FILE_PREFIX + formattedDate);
 
         if (anrFile.createNewFile()) {
-            FileUtils.setPermissions(anrFile.getAbsolutePath(), 0600, -1, -1); // -rw-------
+            //SDD:modify AR-202507-001390 by huan.liu5 2025/07/14 start
+            //FileUtils.setPermissions(anrFile.getAbsolutePath(), 0600, -1, -1); // -rw-------
+            FileUtils.setPermissions(anrFile.getAbsolutePath(), 0666, -1, -1);
+            //SDD:modify AR-202507-001390 by huan.liu5 2025/07/14 end
             return anrFile;
         } else {
             throw new IOException("Unable to create ANR dump file: createNewFile failed");

@@ -16,8 +16,6 @@
 
 package android.hardware;
 
-import static android.companion.virtual.VirtualDeviceManager.ACTION_VIRTUAL_DEVICE_REMOVED;
-import static android.companion.virtual.VirtualDeviceManager.EXTRA_VIRTUAL_DEVICE_ID;
 import static android.companion.virtual.VirtualDeviceParams.DEVICE_POLICY_DEFAULT;
 import static android.companion.virtual.VirtualDeviceParams.POLICY_TYPE_SENSORS;
 import static android.content.Context.DEVICE_ID_DEFAULT;
@@ -164,11 +162,7 @@ public class SystemSensorManager extends SensorManager {
         // initialize the sensor list
         for (int index = 0;; ++index) {
             Sensor sensor = new Sensor();
-            if (android.companion.virtual.flags.Flags.enableNativeVdm()) {
-                if (!nativeGetDefaultDeviceSensorAtIndex(mNativeInstance, sensor, index)) break;
-            } else {
-                if (!nativeGetSensorAtIndex(mNativeInstance, sensor, index)) break;
-            }
+            if (!nativeGetDefaultDeviceSensorAtIndex(mNativeInstance, sensor, index)) break;
             mFullSensorsList.add(sensor);
             mHandleToSensor.put(sensor.getHandle(), sensor);
         }
@@ -248,6 +242,9 @@ public class SystemSensorManager extends SensorManager {
     @Override
     protected boolean registerListenerImpl(SensorEventListener listener, Sensor sensor,
             int delayUs, Handler handler, int maxBatchReportLatencyUs, int reservedFlags) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record_sensor_rate(381, sensor, delayUs);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         if (listener == null || sensor == null) {
             Log.e(TAG, "sensor or listener is null");
             return false;
@@ -295,6 +292,9 @@ public class SystemSensorManager extends SensorManager {
     /** @hide */
     @Override
     protected void unregisterListenerImpl(SensorEventListener listener, Sensor sensor) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record_sensor(382, sensor);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         // Trigger Sensors should use the cancelTriggerSensor call.
         if (sensor != null && sensor.getReportingMode() == Sensor.REPORTING_MODE_ONE_SHOT) {
             return;
@@ -555,11 +555,7 @@ public class SystemSensorManager extends SensorManager {
     }
 
     private List<Sensor> createRuntimeSensorListLocked(int deviceId) {
-        if (android.companion.virtual.flags.Flags.vdmPublicApis()) {
-            setupVirtualDeviceListener();
-        } else {
-            setupRuntimeSensorBroadcastReceiver();
-        }
+        setupVirtualDeviceListener();
         List<Sensor> list = new ArrayList<>();
         nativeGetRuntimeSensors(mNativeInstance, deviceId, list);
         mFullRuntimeSensorListByDevice.put(deviceId, list);
@@ -568,35 +564,6 @@ public class SystemSensorManager extends SensorManager {
             mHandleToSensor.put(s.getHandle(), s);
         }
         return list;
-    }
-
-    private void setupRuntimeSensorBroadcastReceiver() {
-        if (mRuntimeSensorBroadcastReceiver == null) {
-            mRuntimeSensorBroadcastReceiver = new BroadcastReceiver() {
-                @Override
-                public void onReceive(Context context, Intent intent) {
-                    if (intent.getAction().equals(ACTION_VIRTUAL_DEVICE_REMOVED)) {
-                        synchronized (mFullRuntimeSensorListByDevice) {
-                            final int deviceId = intent.getIntExtra(
-                                    EXTRA_VIRTUAL_DEVICE_ID, DEVICE_ID_DEFAULT);
-                            List<Sensor> removedSensors =
-                                    mFullRuntimeSensorListByDevice.removeReturnOld(deviceId);
-                            if (removedSensors != null) {
-                                for (Sensor s : removedSensors) {
-                                    cleanupSensorConnection(s);
-                                }
-                            }
-                            mRuntimeSensorListByDeviceByType.remove(deviceId);
-                        }
-                    }
-                }
-            };
-
-            IntentFilter filter = new IntentFilter("virtual_device_removed");
-            filter.addAction(ACTION_VIRTUAL_DEVICE_REMOVED);
-            mContext.registerReceiver(mRuntimeSensorBroadcastReceiver, filter,
-                    Context.RECEIVER_NOT_EXPORTED);
-        }
     }
 
     private void setupVirtualDeviceListener() {

@@ -25,6 +25,7 @@ import android.annotation.SystemService;
 import android.annotation.TestApi;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.Context;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.content.res.Resources;
@@ -41,6 +42,9 @@ import android.view.RemoteAnimationDefinition;
 import android.window.SplashScreenView.SplashScreenViewParcelable;
 
 import java.util.List;
+//T-HUB Core[SPD]:added for per start action by fan.feng1 20250304 start
+import android.content.Intent;
+//T-HUB Core[SPD]:added for per start action by fan.feng1 20250304 end
 
 /**
  * This class gives information about, and interacts with activities and their containers like task,
@@ -483,6 +487,19 @@ public class ActivityTaskManager {
     }
 
     /**
+     * @return Whether the app could be universal resizeable (assuming it's on a large screen and
+     * ignoring possible overrides)
+     * @hide
+     */
+    public boolean canBeUniversalResizeable(@NonNull ApplicationInfo appInfo) {
+        try {
+            return getService().canBeUniversalResizeable(appInfo);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /**
      * Detaches the navigation bar from the app it was attached to during a transition.
      * @hide
      */
@@ -504,6 +521,18 @@ public class ActivityTaskManager {
             throw e.rethrowFromSystemServer();
         }
     }
+
+    //T-HUB Core[SPD]:added for per start action by fan.feng1 20250304 start
+    /** @hide */
+    @Deprecated
+    public void startLauncherAction(@NonNull Intent intent, int action) {
+        try {
+            getService().startLauncherAction(intent, action);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+    //T-HUB Core[SPD]:added for per start action action by fan.feng1 20250304 end
 
     /**
      * Information you can retrieve about a root task in the system.

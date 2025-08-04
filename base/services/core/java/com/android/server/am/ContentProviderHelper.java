@@ -103,6 +103,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+//T-HUB core[OS]: add by ming.ren 20220516 start
+import com.transsion.hubcore.server.am.ITranActivityManagerService;
+//T-HUB core[OS]: add by ming.ren 20220516 end
+//T-HUB Core[SPD]:added for PROCMANA-241 by yiying.wang 20240228 start
+import com.transsion.hubcore.healthstandard.ITranHealthStandard;
+//T-HUB Core[SPD]:added for PROCMANA-241 by yiying.wang 20240228 end
 /**
  * Activity manager code dealing with content providers.
  */
@@ -554,6 +560,7 @@ public class ContentProviderHelper {
                                     callingProcessState, proc.mState.getCurProcState(),
                                     false, 0L);
                         } else {
+
                             final boolean stopped = cpr.appInfo.isStopped();
                             final int packageState = stopped
                                     ? PROVIDER_ACQUISITION_EVENT_REPORTED__PACKAGE_STOPPED_STATE__PACKAGE_STATE_STOPPED

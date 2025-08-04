@@ -40,7 +40,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-
+//T-HUB core[SPD]: add griffin by na.liu 20230419 start
+import com.transsion.hubcore.server.utils.ITranMediaUtils;
+//T-HUB core[SPD]: add griffin by na.liu 20230419 start
 /**
  * Class to receive and dispatch updates from AudioSystem about recording configurations.
  */
@@ -461,6 +463,9 @@ public final class RecordingActivityMonitor implements AudioSystem.AudioRecordin
                     configChanged = state.setActive(true);
                     if (config != null) {
                         configChanged = state.setConfig(config) || configChanged;
+                        //T-HUB core[SPD]: add by na.liu 20230419 start
+                        ITranMediaUtils.Instance().hookAudioRecordChanged(config.getClientUid(), config.getClientPackageName(), AudioManager.RECORD_CONFIG_EVENT_START);
+                        //T-HUB core[SPD]: add by na.liu 20230419 end
                     }
                     break;
                 case AudioManager.RECORD_CONFIG_EVENT_UPDATE:
@@ -469,16 +474,25 @@ public final class RecordingActivityMonitor implements AudioSystem.AudioRecordin
                     break;
                 case AudioManager.RECORD_CONFIG_EVENT_STOP:
                     configChanged = state.setActive(false);
+                    //T-HUB core[SPD]: add by na.liu 20230419 start
+                    ITranMediaUtils.Instance().hookAudioRecordChanged(config.getClientUid(), config.getClientPackageName(), AudioManager.RECORD_CONFIG_EVENT_UPDATE);
+                    //T-HUB core[SPD]: add by na.liu 20230419 end
                     if (!state.hasDeathHandler()) {
                         // A recorder tracked by AudioServer has to be removed now so it
                         // does not leak. It will be re-registered if recording starts again.
                         mRecordStates.remove(stateIndex);
+                        //T-HUB core[SPD]: add by na.liu 20230419 start
+                        ITranMediaUtils.Instance().hookAudioRecordChanged(config == null ? -1 : config.getClientUid(), null, AudioManager.RECORD_CONFIG_EVENT_STOP);
+                        //T-HUB core[SPD]: add by na.liu 20230419 end
                     }
                     break;
                 case AudioManager.RECORD_CONFIG_EVENT_RELEASE:
                     configChanged = state.isActiveConfiguration();
                     state.release();
                     mRecordStates.remove(stateIndex);
+                    //T-HUB core[SPD]: add by na.liu 20230419 start
+                    ITranMediaUtils.Instance().hookAudioRecordChanged(config == null ? -1 : config.getClientUid(), null, AudioManager.RECORD_CONFIG_EVENT_RELEASE);
+                    //T-HUB core[SPD]: add by na.liu 20230419 end
                     break;
                 default:
                     Log.e(TAG, String.format("Unknown event %d for riid %d / portid %d",

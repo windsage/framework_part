@@ -273,7 +273,7 @@ void InputDeviceMetricsCollector::onInputDeviceUsage(DeviceId deviceId, nanoseco
     }
 
     auto [sessionIt, _] =
-            mActiveUsageSessions.try_emplace(deviceId, mUsageSessionTimeout, eventTime);
+            mActiveUsageSessions.try_emplace(deviceId, ActiveSession(mUsageSessionTimeout, eventTime));
     for (InputDeviceUsageSource source : getSources(infoIt->second)) {
         sessionIt->second.recordUsage(eventTime, source);
     }
@@ -329,7 +329,7 @@ void InputDeviceMetricsCollector::ActiveSession::recordUsage(nanoseconds eventTi
     // We assume that event times for subsequent events are always monotonically increasing for each
     // input device.
     auto [activeSourceIt, inserted] =
-            mActiveSessionsBySource.try_emplace(source, eventTime, eventTime);
+            mActiveSessionsBySource.try_emplace(source, UsageSession(eventTime, eventTime));
     if (!inserted) {
         activeSourceIt->second.end = eventTime;
     }
@@ -346,7 +346,7 @@ void InputDeviceMetricsCollector::ActiveSession::recordInteraction(const Interac
     }
 
     for (Uid uid : std::get<std::set<Uid>>(interaction)) {
-        auto [activeUidIt, inserted] = mActiveSessionsByUid.try_emplace(uid, timestamp, timestamp);
+        auto [activeUidIt, inserted] = mActiveSessionsByUid.try_emplace(uid, UsageSession(timestamp, timestamp));
         if (!inserted) {
             activeUidIt->second.end = timestamp;
         }

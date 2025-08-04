@@ -36,6 +36,8 @@
     <string name="wifi_security_short_eap_wpa">WPA-EAP</string>
     <!-- Concise terminology for wifi with WPA2/WPA3 802.1x EAP security [CHAR LIMIT=40] -->
     <string name="wifi_security_short_eap_wpa2_wpa3">RSN-EAP</string>
+    <!-- Concise terminology for wifi with DPP security [CHAR LIMIT=40] -->
+    <string name="wifi_security_short_dpp">DPP</string>
     <!-- Concise terminology for wifi with WPA3 security [CHAR LIMIT=40] -->
     <string name="wifi_security_short_sae">WPA3</string>
     <!-- Concise terminology for wifi with WPA2/WPA3 transition security [CHAR LIMIT=40] -->
@@ -72,6 +74,8 @@
     <string name="wifi_security_eap_wpa3">WPA3-Enterprise</string>
     <!-- Concise terminology for Passpoint network [CHAR LIMIT=40] -->
     <string name="wifi_security_passpoint">Passpoint</string>
+    <!-- Concise terminology for DPP network -->
+    <string name="wifi_security_dpp" translatable="false">DPP</string>
     <!-- Terminology for wifi with WPA3 security [CHAR LIMIT=40] -->
     <string name="wifi_security_sae">WPA3-Personal</string>
     <!-- Terminology for wifi with WPA2/WPA3 Transition mode security [CHAR LIMIT=40] -->
@@ -229,11 +233,21 @@
     <string name="bluetooth_hearing_aid_right_active">Active (right only)</string>
     <!-- Connected device settings. Message when the left-side and right-side hearing aids device are active. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_hearing_aid_left_and_right_active">Active (left and right)</string>
+    <!-- Connected device settings.: Message when changing remote ambient state failed. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_hearing_device_ambient_error">Couldn\u2019t update surroundings</string>
 
     <!-- Connected devices settings. Message when Bluetooth is connected and active for media only, showing remote device status and battery level. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_active_media_only_battery_level">Active (media only). <xliff:g id="battery_level_as_percentage">%1$s</xliff:g> battery.</string>
     <!-- Connected devices settings. Message when Bluetooth is connected and active for media only, showing remote device status and battery level for untethered headset. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_active_media_only_battery_level_untethered">Active (media only). L: <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g>, R: <xliff:g id="battery_level_as_percentage" example="25%">%2$s</xliff:g> battery.</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device status and battery level for temporary bond device. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_battery_level">Guest device. <xliff:g id="battery_level_as_percentage">%1$s</xliff:g> battery.</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device status and battery level for temporary bond untethered headset. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_battery_level_untethered">Guest device. L: <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g>, R: <xliff:g id="battery_level_as_percentage" example="25%">%2$s</xliff:g> battery.</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected and active for media only, showing remote device status and battery level for temporary bond device. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_media_only_battery_level">Guest device (media only). <xliff:g id="battery_level_as_percentage">%1$s</xliff:g> battery.</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected and active for media only, showing remote device status and battery level for temporary bond untethered headset. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_media_only_battery_level_untethered">Guest device (media only). L: <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g>, R: <xliff:g id="battery_level_as_percentage" example="25%">%2$s</xliff:g> battery.</string>
     <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device battery level, supports audio sharing. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_battery_level_lea_support">Connected (supports audio sharing). <xliff:g id="battery_level_as_percentage">%1$s</xliff:g> battery.</string>
     <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device battery level for untethered headset, supports audio sharing. [CHAR LIMIT=NONE] -->
@@ -244,10 +258,22 @@
     <string name="bluetooth_battery_level_untethered_right_lea_support">Connected (supports audio sharing). Right: <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g> battery.</string>
     <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing no battery information, supports audio sharing. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_no_battery_level_lea_support">Connected (supports audio sharing)</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device battery level, supports audio sharing. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_battery_level_lea_support">Guest device (supports audio sharing). <xliff:g id="battery_level_as_percentage">%1$s</xliff:g> battery.</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing remote device battery level for untethered headset, supports audio sharing. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_battery_level_untethered_lea_support">Guest device (supports audio sharing). L: <xliff:g id="battery_level_as_percentage" example="25%">%1$s</xliff:g>, R: <xliff:g id="battery_level_as_percentage" example="25%">%2$s</xliff:g> battery.</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected but not in use, showing no battery information, supports audio sharing. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_no_battery_level_lea_support">Guest device (supports audio sharing)</string>
     <!-- Connected devices settings. Message when Bluetooth is connected and active for media only but no battery information, showing remote device status. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_active_media_only_no_battery_level">Active (media only)</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected but not in use with no battery information, showing remote device status for temporary bond device. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_no_battery_level">Guest device</string>
+    <!-- Connected devices settings. Message when Bluetooth is connected and active for media only but no battery information, showing remote device status for temporary bond device. [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_media_only_no_battery_level">Guest device (media only)</string>
     <!-- Connected devices settings. Message shown when bluetooth device is disconnected but is a known, previously connected device, supports audio sharing [CHAR LIMIT=NONE] -->
     <string name="bluetooth_saved_device_lea_support">Supports audio sharing</string>
+    <!-- Connected devices settings. Message shown when temporary bond bluetooth device is disconnected but is a known, previously connected device, supports audio sharing [CHAR LIMIT=NONE] -->
+    <string name="bluetooth_guest_saved_device_lea_support">Guest device. Supports audio sharing</string>
 
     <!-- Connected device settings. Message when the left-side hearing aid device is active for media only. [CHAR LIMIT=NONE] -->
     <string name="bluetooth_hearing_aid_media_only_left_active">Active (media only), left only</string>
@@ -262,11 +288,13 @@
     <string name="bluetooth_profile_headset">Phone calls</string>
     <!-- Bluetooth settings.  The user-visible string that is used whenever referring to the OPP profile. -->
     <string name="bluetooth_profile_opp">File transfer</string>
+    <!-- Bluetooth settings.  The user-visible string that is used whenever referring to the Broadcast profile. -->
+    <string name="bluetooth_profile_broadcast">Broadcast</string>
     <!-- Bluetooth settings. The user-visible string that is used whenever referring to the HID profile. -->
     <string name="bluetooth_profile_hid">Input device</string>
     <!-- Bluetooth settings. The user-visible string that is used whenever referring to the PAN profile (accessing Internet through remote device). [CHAR LIMIT=40] -->
     <string name="bluetooth_profile_pan">Internet access</string>
-    <!-- Bluetooth settings. The user-visible string that is used whenever referring to the PBAP profile. [CHAR LIMIT=40] -->
+    <!-- Bluetooth settings. The user-visible string that is used whenever referring to the PBAP profile. [CHAR LIMIT=80] -->
     <string name="bluetooth_profile_pbap">Allow access to contacts and call history</string>
     <!-- Bluetooth settings. The user-visible summary string that is used whenever referring to the PBAP profile (sharing contacts). [CHAR LIMIT=60] -->
     <string name="bluetooth_profile_pbap_summary">Info will be used for call announcements and more</string>
@@ -276,6 +304,11 @@
     <string name="bluetooth_profile_map">Text Messages</string>
     <!-- Bluetooth settings. The user-visible string that is used whenever referring to the SAP profile (sharing SIM card). -->
     <string name="bluetooth_profile_sap">SIM Access</string>
+    <!-- Bluetooth settings. The user-visible string that is used whenever referring to the dun profile. -->
+    <string name="bluetooth_profile_dun">Dial-up Network Access</string>
+    <!-- Bluetooth settings. The user-visible string that is used
+         whenever referring to the vcp profile. -->
+    <string name="bluetooth_profile_vcp">Volume control</string>
 
     <!-- Bluetooth settings. The user-visible string for the setting controlling whether to use a high-quality codec if the device supports it, along with the name of the codec (eg AAC, LDAC, aptX) -->
     <string name="bluetooth_profile_a2dp_high_quality">HD audio: <xliff:g id="codec_name">%1$s</xliff:g></string>
@@ -310,6 +343,8 @@
     <string name="bluetooth_pan_user_profile_summary_connected">Connected to device for internet access</string>
     <!-- Bluetooth settings. Connection options screen. The summary for the checkbox preference when PAN is connected (NAP role). [CHAR LIMIT=25]-->
     <string name="bluetooth_pan_nap_profile_summary_connected">Sharing local internet connection with device</string>
+    <!-- Bluetooth settings.  Connection options screen.  The summary for the DUN checkbox preference when DUN is connected. -->
+    <string name="bluetooth_dun_profile_summary_connected">Connected to Dun Server</string>
 
     <!-- Bluetooth settings. Connection options screen. The summary
          for the PAN checkbox preference that describes how checking it
@@ -333,6 +368,8 @@
     <string name="bluetooth_hearing_aid_profile_summary_use_for">Use for hearing aids</string>
     <!-- Bluetooth settings.  Connection options screen.  The summary for the LE_AUDIO checkbox preference that describes how checking it will set the LE_AUDIO profile as preferred. -->
     <string name="bluetooth_le_audio_profile_summary_use_for">Use for LE_AUDIO</string>
+    <!-- Bluetooth settings. Connection options screen.  The summary for the dun checkbox preference that describes how checking it will set the dun profile as preferred. -->
+    <string name="bluetooth_dun_profile_summary_use_for">Use for Dial-up Network access</string>
 
     <!-- Button text for accepting an incoming pairing request. [CHAR LIMIT=20] -->
     <string name="bluetooth_pairing_accept">Pair</string>
@@ -365,6 +402,9 @@
 
     <!-- Message for telling the user the kind of BT device being displayed in list. [CHAR LIMIT=30 BACKUP_MESSAGE_ID=551146170554589119] -->
     <string name="bluetooth_talkback_imaging">Imaging</string>
+
+    <!-- Message for telling the user the kind of BT device being displayed. [CHAR LIMIT=30] -->
+    <string name="bluetooth_talkback_group">Group Devices</string>
 
     <!-- Message for telling the user the kind of BT device being displayed in list. [CHAR LIMIT=30 BACKUP_MESSAGE_ID=26580326066627664] -->
     <string name="bluetooth_talkback_headphone">Headphone</string>
@@ -683,6 +723,8 @@
 
     <!-- Setting Checkbox title whether to show options for wireless display certification -->
     <string name="wifi_display_certification">Wireless display certification</string>
+    <!-- Setting Checkbox title whether to enable WiFi coverage extending feature. -->
+    <string name="wifi_coverage_extend">Enable Wi\u2011Fi Coverage Extend Feature</string>
     <!-- Setting Checkbox title whether to enable WiFi Verbose Logging. [CHAR LIMIT=40] -->
     <string name="wifi_verbose_logging">Enable Wi\u2011Fi Verbose Logging</string>
     <!-- Setting Checkbox title whether to disable WiFi Scan Throttling. [CHAR LIMIT=40] -->
@@ -753,6 +795,9 @@
     <!-- setting Checkbox summary whether to show options for wireless display certification  -->
     <string name="wifi_display_certification_summary">Show options for wireless display certification</string>
     <!-- Setting Checkbox summary whether to enable Wifi verbose Logging [CHAR_LIMIT=NONE] -->
+    <!-- Setting Checkbox summary whether to enable WiFi coverage extending feature. -->
+    <string name="wifi_coverage_extend_summary">Enable extending Wi\u2011Fi coverage using Hotspot</string>
+    <!-- Setting Checkbox summary whether to enable Wifi verbose Logging [CHAR LIMIT=80] -->
     <string name="wifi_verbose_logging_summary">Increase Wi\u2011Fi logging level, show per SSID RSSI in Wi\u2011Fi Picker</string>
     <!-- Setting Checkbox summary whether to disable Wifi scan throttling [CHAR LIMIT=NONE] -->
     <string name="wifi_scan_throttling_summary">Reduces battery drain &amp; improves network performance</string>
@@ -866,6 +911,9 @@
 
     <!-- Preference category for monitoring debugging development settings. [CHAR LIMIT=25] -->
     <string name="debug_monitoring_category">Monitoring</string>
+
+    <!-- Preference category to alter window management settings, [CHAR LIMIT=50] -->
+    <string name="window_management_category">Window Management</string>
 
     <!-- UI debug setting: always enable strict mode? [CHAR LIMIT=25] -->
     <string name="strict_mode">Strict mode enabled</string>
@@ -990,6 +1038,9 @@
     <!-- UI debug setting: simulate secondary display devices using overlays [CHAR LIMIT=45] -->
     <string name="overlay_display_devices_title">Simulate secondary displays</string>
 
+    <!-- UI debug setting: shade display awareness title [CHAR LIMIT=45] -->
+    <string name="shade_display_awareness_title">Shade display position</string>
+
     <!-- Preference category for application debugging development settings. [CHAR LIMIT=25] -->
     <string name="debug_applications_category">Apps</string>
 
@@ -1097,6 +1148,13 @@
     <string name="select_webview_provider_dialog_title">Set WebView implementation</string>
     <!-- Developer settings: text for the WebView provider selection toast shown if an invalid provider was chosen (i.e. the setting list was stale). [CHAR LIMIT=NONE] -->
     <string name="select_webview_provider_toast_text">This choice is no longer valid. Try again.</string>
+
+    <!-- [CHAR LIMIT=50] Label for button to launch current WebView provider's DevTools (developer tools) UI -->
+    <string name="webview_launch_devtools_title">WebView DevTools</string>
+    <!-- [CHAR LIMIT=50] Error toast shown to user when no (current) WebView package is found (when trying to launch DevTools) -->
+    <string name="webview_launch_devtools_no_package">WebView package not found.</string>
+    <!-- [CHAR LIMIT=50] Error toast shown to user when DevTools (developer tools) activity could not be launched (despite there being a WebView package) -->
+    <string name="webview_launch_devtools_no_activity">Could not launch DevTools.</string>
 
     <!-- Name of feature to change color setting for the display [CHAR LIMIT=60] -->
     <string name="picture_color_mode">Picture color mode</string>
@@ -1223,9 +1281,13 @@
 
     <!-- Summary for settings preference disabled by app ops [CHAR LIMIT=50] -->
     <string name="disabled_by_app_ops_text">Controlled by Restricted Setting</string>
+    <!-- Summary for settings preference disabled while the device is in a phone call [CHAR LIMIT=50] -->
+    <string name="disabled_in_phone_call_text">Unavailable during calls</string>
 
     <!-- [CHAR LIMIT=25] Manage applications, text telling using an application is disabled. -->
     <string name="disabled">Disabled</string>
+    <!-- Summary for a settings preference indicating it is enabled [CHAR LIMIT = 30] -->
+    <string name="enabled">Enabled</string>
     <!-- Summary of app trusted to install apps [CHAR LIMIT=45] -->
     <string name="external_source_trusted">Allowed</string>
     <!-- Summary of app not trusted to install apps [CHAR LIMIT=45] -->
@@ -1470,6 +1532,9 @@
 
     <!-- Warning message to tell user is have problem during profile connect, it need to turn off device and back on. [CHAR_LIMIT=NONE] -->
     <string name="profile_connect_timeout_subtext">Problem connecting. Turn device off &amp; back on</string>
+
+    <!-- Warning message when the bluetooth key is missing. [CHAR_LIMIT=NONE] -->
+    <string name="bluetooth_key_missing_subtext">Can’t connect</string>
 
     <!-- Name of the 3.5mm audio device. [CHAR LIMIT=40] -->
     <string name="media_transfer_wired_device_name">Wired audio device</string>

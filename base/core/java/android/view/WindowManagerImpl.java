@@ -120,7 +120,7 @@ public class WindowManagerImpl implements WindowManager {
         this(context, null /* parentWindow */, null /* clientToken */);
     }
 
-    private WindowManagerImpl(Context context, Window parentWindow,
+    public WindowManagerImpl(Context context, Window parentWindow,
             @Nullable IBinder windowContextToken) {
         mContext = context;
         mParentWindow = parentWindow;
@@ -154,6 +154,9 @@ public class WindowManagerImpl implements WindowManager {
 
     @Override
     public void addView(@NonNull View view, @NonNull ViewGroup.LayoutParams params) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record_vg_layout(383,params);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         applyTokens(params);
         mGlobal.addView(view, params, mContext.getDisplayNoVerify(), mParentWindow,
                 mContext.getUserId());
@@ -161,6 +164,9 @@ public class WindowManagerImpl implements WindowManager {
 
     @Override
     public void updateViewLayout(@NonNull View view, @NonNull ViewGroup.LayoutParams params) {
+// QTI_BEGIN: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
+        android.util.SeempLog.record_vg_layout(384,params);
+// QTI_END: 2018-04-09: Secure Systems: SEEMP: framework instrumentation and AppProtect features
         applyTokens(params);
         mGlobal.updateViewLayout(view, params);
     }

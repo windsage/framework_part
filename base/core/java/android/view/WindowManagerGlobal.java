@@ -40,6 +40,9 @@ import android.os.SystemProperties;
 import android.util.AndroidRuntimeException;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+// QTI_BEGIN: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
+import android.util.BoostFramework.ScrollOptimizer;
+// QTI_END: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
 import android.util.Log;
 import android.util.Pair;
 import android.util.SparseArray;
@@ -50,6 +53,7 @@ import android.window.TrustedPresentationThresholds;
 
 import com.android.internal.R;
 import com.android.internal.annotations.GuardedBy;
+import com.android.internal.policy.PhoneWindow;
 import com.android.internal.util.FastPrintWriter;
 
 import java.io.FileDescriptor;
@@ -57,6 +61,7 @@ import java.io.FileOutputStream;
 import java.io.PrintWriter;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.WeakHashMap;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
@@ -146,6 +151,13 @@ public final class WindowManagerGlobal {
 
     @UnsupportedAppUsage
     private final ArrayList<View> mViews = new ArrayList<View>();
+    /**
+     * The {@link ListenerGroup} that is associated to {@link #mViews}.
+     * @hide
+     */
+    @GuardedBy("mLock")
+    private final ListenerGroup<List<View>> mWindowViewsListenerGroup =
+            new ListenerGroup<>(new ArrayList<>());
     @UnsupportedAppUsage
     private final ArrayList<ViewRootImpl> mRoots = new ArrayList<ViewRootImpl>();
     @UnsupportedAppUsage
@@ -318,6 +330,32 @@ public final class WindowManagerGlobal {
         }
     }
 
+    /**
+     * Adds a listener that will be notified whenever {@link #getWindowViews()} changes. The
+     * current value is provided immediately using the provided {@link Executor}. If this
+     * {@link Consumer} was registered previously, then this is a no op.
+     */
+    public void addWindowViewsListener(@NonNull Executor executor,
+            @NonNull Consumer<List<View>> consumer) {
+        synchronized (mLock) {
+            if (mWindowViewsListenerGroup.isConsumerPresent(consumer)) {
+                return;
+            }
+            mWindowViewsListenerGroup.addListener(executor, consumer);
+        }
+    }
+
+    /**
+     * Removes a listener that was registered in
+     * {@link #addWindowViewsListener(Executor, Consumer)}. If it was not registered previously,
+     * then this is a no op.
+     */
+    public void removeWindowViewsListener(@NonNull Consumer<List<View>> consumer) {
+        synchronized (mLock) {
+            mWindowViewsListenerGroup.removeListener(consumer);
+        }
+    }
+
     public View getWindowView(IBinder windowToken) {
         synchronized (mLock) {
             final int numViews = mViews.size();
@@ -347,6 +385,38 @@ public final class WindowManagerGlobal {
         return null;
     }
 
+// QTI_BEGIN: 2024-02-27: Performance: perf: porting the fixes for pre-rendering from U to V.
+    private int getVisibleRootCount (ArrayList<ViewRootImpl> roots) {
+        int visibleRootCount = 0;
+        int lastLeft = -1;
+        int lastTop = -1;
+        int lastWidth = 0;
+        int lastHeight = 0;
+        for (int i = roots.size() - 1; i >= 0; --i) {
+            View root_view = roots.get(i).getView();
+            if (root_view != null && root_view.getVisibility() == View.VISIBLE) {
+                int left = root_view.getLeft();
+                int top = root_view.getTop();
+                int width = root_view.getRight() - root_view.getLeft() ;
+                int height = root_view.getBottom() - root_view.getTop() ;
+                // Filter the invalid visible views.
+                if (width != 0 && height != 0) {
+                    // Filter the overwritten visible views.
+                    if (lastWidth != width || lastHeight != height ||
+                        lastLeft != left || lastTop != top ) {
+                        visibleRootCount++;
+                    }
+                    lastLeft = left;
+                    lastTop = top;
+                    lastWidth = width;
+                    lastHeight = height;
+                }
+            }
+        }
+        return visibleRootCount;
+    }
+
+// QTI_END: 2024-02-27: Performance: perf: porting the fixes for pre-rendering from U to V.
     public void addView(View view, ViewGroup.LayoutParams params,
             Display display, Window parentWindow, int userId) {
         if (view == null) {
@@ -375,7 +445,8 @@ public final class WindowManagerGlobal {
 
         if (context != null && wparams.type > LAST_APPLICATION_WINDOW) {
             final TypedArray styles = context.obtainStyledAttributes(R.styleable.Window);
-            if (styles.getBoolean(R.styleable.Window_windowOptOutEdgeToEdgeEnforcement, false)) {
+            if (PhoneWindow.isOptingOutEdgeToEdgeEnforcement(
+                    context.getApplicationInfo(), true /* local */, styles)) {
                 wparams.privateFlags |= PRIVATE_FLAG_OPT_OUT_EDGE_TO_EDGE;
             }
             styles.recycle();
@@ -445,6 +516,18 @@ public final class WindowManagerGlobal {
 
             view.setLayoutParams(wparams);
 
+// QTI_BEGIN: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
+            int visibleRootCount = 0;
+// QTI_END: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
+// QTI_BEGIN: 2024-02-27: Performance: perf: porting the fixes for pre-rendering from U to V.
+            visibleRootCount = getVisibleRootCount(mRoots);
+            if (visibleRootCount > 1) {
+// QTI_END: 2024-02-27: Performance: perf: porting the fixes for pre-rendering from U to V.
+// QTI_BEGIN: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
+                ScrollOptimizer.disableOptimizer(true);
+            }
+
+// QTI_END: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
             mViews.add(view);
             mRoots.add(root);
             mParams.add(wparams);
@@ -452,7 +535,9 @@ public final class WindowManagerGlobal {
             // do this last because it fires off messages to start doing things
             try {
                 root.setView(view, wparams, panelParentView, userId);
+                mWindowViewsListenerGroup.accept(getWindowViews());
             } catch (RuntimeException e) {
+                Log.e(TAG, "Couldn't add view: " + view, e);
                 final int viewIndex = (index >= 0) ? index : (mViews.size() - 1);
                 // BadTokenException or InvalidDisplayException, clean up.
                 if (viewIndex >= 0) {
@@ -571,7 +656,29 @@ public final class WindowManagerGlobal {
                 final View view = mViews.remove(index);
                 mDyingViews.remove(view);
             }
+
+// QTI_BEGIN: 2024-02-27: Performance: perf: porting the fixes for pre-rendering from U to V.
+            // The visibleRootCount more than one means multi-layer, and multi-layer rendering
+            // can result in unexpected pending between UI thread and render thread with
+            // pre-rendering enabled. Need to disable pre-rendering for multi-layer cases.
+// QTI_END: 2024-02-27: Performance: perf: porting the fixes for pre-rendering from U to V.
+// QTI_BEGIN: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
+            int visibleRootCount = 0;
+// QTI_END: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
+// QTI_BEGIN: 2024-02-27: Performance: perf: porting the fixes for pre-rendering from U to V.
+            visibleRootCount = getVisibleRootCount(mRoots);
+
+            if (visibleRootCount > 1) {
+                ScrollOptimizer.disableOptimizer(true);
+            } else if (visibleRootCount == 1) {
+// QTI_END: 2024-02-27: Performance: perf: porting the fixes for pre-rendering from U to V.
+// QTI_BEGIN: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
+                ScrollOptimizer.disableOptimizer(false);
+            }
+
+// QTI_END: 2023-02-15: Performance: perf: recover the pre-rendering feature in the U
             allViewsRemoved = mRoots.isEmpty();
+            mWindowViewsListenerGroup.accept(getWindowViews());
         }
 
         // If we don't have any views anymore in our process, we no longer need the

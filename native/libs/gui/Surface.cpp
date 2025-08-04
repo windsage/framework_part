@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+/* Changes from Qualcomm Innovation Center are provided under the following license:
+ *
+ * Copyright (c) 2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 #define LOG_TAG "Surface"
 #define ATRACE_TAG ATRACE_TAG_GRAPHICS
 //#define LOG_NDEBUG 0
@@ -38,6 +46,7 @@
 #include <utils/NativeHandle.h>
 #include <utils/Trace.h>
 
+#include <ui/BufferQueueDefs.h>
 #include <ui/DynamicDisplayInfo.h>
 #include <ui/Fence.h>
 #include <ui/GraphicBuffer.h>
@@ -53,6 +62,14 @@
 
 #include <com_android_graphics_libgui_flags.h>
 
+// QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank
+#include "QtiExtension/QtiFenceMonitorExtension.h"
+// QTI_END: 2025-05-13: Performance: native: detect GPU big jank
+
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+#include <cutils/properties.h>
+
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 namespace android {
 
 using namespace com::android::graphics::libgui;
@@ -98,7 +115,10 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
       : mGraphicBufferProducer(bufferProducer),
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
         mSurfaceDeathListener(nullptr),
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+#endif
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        mSlots(NUM_BUFFER_SLOTS),
+#endif
         mCrop(Rect::EMPTY_RECT),
         mBufferAge(0),
         mGenerationNumber(0),
@@ -147,9 +167,52 @@ Surface::Surface(const sp<IGraphicBufferProducer>& bufferProducer, bool controll
     mSwapIntervalZero = false;
     mMaxBufferCount = NUM_BUFFER_SLOTS;
     mSurfaceControlHandle = surfaceControlHandle;
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+
+    char value[PROPERTY_VALUE_MAX];
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+    int intValue = 0;
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+    property_get("vendor.display.enable_optimal_refresh_rate", value, "0");
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+    intValue = atoi(value);
+    bool enableOptimalRefreshRate = (intValue == 1) ? true : false;
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+    if (!mQtiSurfaceExtn && enableOptimalRefreshRate) {
+        mQtiSurfaceExtn = new libguiextension::QtiSurfaceExtension(this);
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+    }
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+
+    property_get("vendor.gpp.create_frc_extension", value, "0");
+    intValue = atoi(value);
+    if (!mQtiSurfaceGPPExtn && intValue == 1) {
+        mQtiSurfaceGPPExtn = std::make_shared<libguiextension::QtiSurfaceExtensionGPP>(IGraphicBufferProducer::asBinder(bufferProducer), &mGraphicBufferProducer);
+    }
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
 }
 
 Surface::~Surface() {
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+    if (mQtiSurfaceExtn) {
+        delete mQtiSurfaceExtn;
+    }
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+    mQtiSurfaceGPPExtn = nullptr;
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
     if (mConnectedToCpu) {
         Surface::disconnect(NATIVE_WINDOW_API_CPU);
     }
@@ -179,6 +242,12 @@ sp<IGraphicBufferProducer> Surface::getIGraphicBufferProducer() const {
 
 void Surface::setSidebandStream(const sp<NativeHandle>& stream) {
     mGraphicBufferProducer->setSidebandStream(stream);
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->setSidebandStream(stream);
+    }
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 }
 
 void Surface::allocateBuffers() {
@@ -192,7 +261,7 @@ void Surface::allocateBuffers() {
 status_t Surface::allowAllocation(bool allowAllocation) {
     return mGraphicBufferProducer->allowAllocation(allowAllocation);
 }
-#endif // COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
+#endif
 
 status_t Surface::setGenerationNumber(uint32_t generation) {
     status_t result = mGraphicBufferProducer->setGenerationNumber(generation);
@@ -505,7 +574,7 @@ int Surface::hook_dequeueBuffer_DEPRECATED(ANativeWindow* window,
     if (result != OK) {
         return result;
     }
-    sp<Fence> fence(new Fence(fenceFd));
+    sp<Fence> fence = sp<Fence>::make(fenceFd);
     int waitResult = fence->waitForever("dequeueBuffer_DEPRECATED");
     if (waitResult != OK) {
         ALOGE("dequeueBuffer_DEPRECATED: Fence::wait returned an error: %d",
@@ -619,6 +688,13 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
     ATRACE_FORMAT("dequeueBuffer - %s", getDebugName());
     ALOGV("Surface::dequeueBuffer");
 
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->DynamicEnable(&mGraphicBufferProducer);
+    }
+
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     IGraphicBufferProducer::DequeueBufferInput dqInput;
     {
         Mutex::Autolock lock(mMutex);
@@ -658,7 +734,11 @@ int Surface::dequeueBuffer(android_native_buffer_t** buffer, int* fenceFd) {
         return result;
     }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    if (buf < 0 || buf >= (int)mSlots.size()) {
+#else
     if (buf < 0 || buf >= NUM_BUFFER_SLOTS) {
+#endif
         ALOGE("dequeueBuffer: IGraphicBufferProducer returned invalid slot number %d", buf);
         android_errorWriteLog(0x534e4554, "36991414"); // SafetyNet logging
         return FAILED_TRANSACTION;
@@ -757,7 +837,11 @@ status_t Surface::detachBuffer(const sp<GraphicBuffer>& buffer) {
     Mutex::Autolock lock(mMutex);
 
     uint64_t bufferId = buffer->getId();
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int slot = 0; slot < (int)mSlots.size(); ++slot) {
+#else
     for (int slot = 0; slot < Surface::NUM_BUFFER_SLOTS; ++slot) {
+#endif
         auto& bufferSlot = mSlots[slot];
         if (bufferSlot.buffer != nullptr && bufferSlot.buffer->getId() == bufferId) {
             bufferSlot.buffer = nullptr;
@@ -780,6 +864,12 @@ int Surface::dequeueBuffers(std::vector<BatchBuffer>* buffers) {
     ATRACE_CALL();
     ALOGV("Surface::dequeueBuffers");
 
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->DynamicEnable(&mGraphicBufferProducer);
+    }
+
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     if (buffers->size() == 0) {
         ALOGE("%s: must dequeue at least 1 buffer!", __FUNCTION__);
         return BAD_VALUE;
@@ -840,7 +930,11 @@ int Surface::dequeueBuffers(std::vector<BatchBuffer>* buffers) {
             return output.result;
         }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        if (output.slot < 0 || output.slot >= (int)mSlots.size()) {
+#else
         if (output.slot < 0 || output.slot >= NUM_BUFFER_SLOTS) {
+#endif
             mGraphicBufferProducer->cancelBuffers(cancelBufferInputs, &cancelBufferOutputs);
             ALOGE("%s: IGraphicBufferProducer returned invalid slot number %d",
                     __FUNCTION__, output.slot);
@@ -963,7 +1057,7 @@ int Surface::cancelBuffer(android_native_buffer_t* buffer,
         }
         return OK;
     }
-    sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+    sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
     mGraphicBufferProducer->cancelBuffer(i, fence);
 
     if (mSharedBufferMode && mAutoRefresh && mSharedBufferSlot == i) {
@@ -1001,7 +1095,7 @@ int Surface::cancelBuffers(const std::vector<BatchBuffer>& buffers) {
             ALOGE("%s: cannot find slot number for cancelled buffer", __FUNCTION__);
             badSlotResult = slot;
         } else {
-            sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+            sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
             cancelBufferInputs[numBuffersCancelled].slot = slot;
             cancelBufferInputs[numBuffersCancelled++].fence = fence;
         }
@@ -1027,7 +1121,11 @@ int Surface::getSlotFromBufferLocked(
         return BAD_VALUE;
     }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int i = 0; i < (int)mSlots.size(); i++) {
+#else
     for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
+#endif
         if (mSlots[i].buffer != nullptr &&
                 mSlots[i].buffer->handle == buffer->handle) {
             return i;
@@ -1058,7 +1156,7 @@ void Surface::getQueueBufferInputLocked(android_native_buffer_t* buffer, int fen
     Rect crop(Rect::EMPTY_RECT);
     mCrop.intersect(Rect(buffer->width, buffer->height), &crop);
 
-    sp<Fence> fence(fenceFd >= 0 ? new Fence(fenceFd) : Fence::NO_FENCE);
+    sp<Fence> fence(fenceFd >= 0 ? sp<Fence>::make(fenceFd) : Fence::NO_FENCE);
     IGraphicBufferProducer::QueueBufferInput input(timestamp, isAutoTimestamp,
             static_cast<android_dataspace>(mDataSpace), crop, mScalingMode,
             mTransform ^ mStickyTransform, fence, mStickyTransform,
@@ -1136,6 +1234,17 @@ void Surface::applyGrallocMetadataLocked(
         android_native_buffer_t* buffer,
         const IGraphicBufferProducer::QueueBufferInput& queueBufferInput) {
     ATRACE_CALL();
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+// QTI_BEGIN: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+    if (mQtiSurfaceExtn) {
+// QTI_END: 2024-04-07: Display: gui: use mapper5 for setting vendor metadata.
+// QTI_BEGIN: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
+        mQtiSurfaceExtn->qtiSetBufferDequeueDuration(getDebugName(), buffer, mLastDequeueDuration);
+    }
+
+// QTI_END: 2024-02-29: Display: gui: set buffer dequeue duration in buffer private meta data
     auto& mapper = GraphicBufferMapper::get();
     mapper.setDataspace(buffer->handle, static_cast<ui::Dataspace>(queueBufferInput.dataSpace));
     if (mHdrMetadataIsSet & HdrMetadata::SMPTE2086)
@@ -1188,7 +1297,10 @@ void Surface::onBufferQueuedLocked(int slot, sp<Fence> fence,
 
     mQueueBufferCondition.broadcast();
 
-    if (CC_UNLIKELY(atrace_is_tag_enabled(ATRACE_TAG_GRAPHICS))) {
+    if (CC_UNLIKELY(atrace_is_tag_enabled(ATRACE_TAG_GRAPHICS))
+             /* QTI_BEGIN: 2025-05-13: Performance: native: detect GPU big jank */
+             || libguiextension::QtiFenceMonitorExtension::qtiGetGPUBigJankEnabled()
+             /* QTI_END: 2025-05-13: Performance: native: detect GPU big jank */) {
         static gui::FenceMonitor gpuCompletionThread("GPU completion");
         gpuCompletionThread.queueFence(fence);
     }
@@ -1227,6 +1339,12 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd,
         fence = input.fence;
     }
     nsecs_t now = systemTime();
+// QTI_BEGIN: 2024-12-16: Performance: gui: Update game gfx tid detection on Android-W
+    if (mQtiSurfaceExtn) {
+        mQtiSurfaceExtn->qtiTrackTransaction(mNextFrameNumber, now);
+    }
+
+// QTI_END: 2024-12-16: Performance: gui: Update game gfx tid detection on Android-W
     // Drop the lock temporarily while we touch the underlying producer. In the case of a local
     // BufferQueue, the following should be allowable:
     //
@@ -1354,6 +1472,11 @@ int Surface::queueBuffer(android_native_buffer_t* buffer, int fenceFd) {
     sp<Fence> fence = input.fence;
 
     nsecs_t now = systemTime();
+// QTI_BEGIN: 2024-10-04: Performance: gui: Send game gfx tid to perf service in Surface
+    if (mQtiSurfaceExtn) {
+        mQtiSurfaceExtn->qtiTrackTransaction(mNextFrameNumber, now);
+    }
+// QTI_END: 2024-10-04: Performance: gui: Send game gfx tid to perf service in Surface
 
     status_t err = mGraphicBufferProducer->queueBuffer(i, input, &output);
     mLastQueueDuration = systemTime() - now;
@@ -1532,6 +1655,12 @@ int Surface::query(int what, int* value) const {
             }
         }
     }
+// QTI_BEGIN: 2024-08-01: Video: libgui: gpp extension latency optimization.
+
+    if (mQtiSurfaceGPPExtn && mQtiSurfaceGPPExtn->IsGPPEnabled()) {
+        return mQtiSurfaceGPPExtn->query(what, value);
+    }
+// QTI_END: 2024-08-01: Video: libgui: gpp extension latency optimization.
     return mGraphicBufferProducer->query(what, value);
 }
 
@@ -2072,7 +2201,7 @@ bool Surface::transformToDisplayInverse() const {
 }
 
 int Surface::connect(int api) {
-    static sp<SurfaceListener> listener = new StubSurfaceListener();
+    static sp<SurfaceListener> listener = sp<StubSurfaceListener>::make();
     return connect(api, listener);
 }
 
@@ -2082,9 +2211,15 @@ int Surface::connect(int api, const sp<SurfaceListener>& listener, bool reportBu
     Mutex::Autolock lock(mMutex);
     IGraphicBufferProducer::QueueBufferOutput output;
     mReportRemovedBuffers = reportBufferRemoval;
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->Connect(api, &mGraphicBufferProducer);
+    }
+
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
     if (listener != nullptr) {
-        mListenerProxy = new ProducerListenerProxy(this, listener);
+        mListenerProxy = sp<ProducerListenerProxy>::make(this, listener);
     }
 
     int err =
@@ -2094,6 +2229,9 @@ int Surface::connect(int api, const sp<SurfaceListener>& listener, bool reportBu
         mDefaultHeight = output.height;
         mNextFrameNumber = output.nextFrameNumber;
         mMaxBufferCount = output.maxBufferCount;
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        mIsSlotExpansionAllowed = output.isSlotExpansionAllowed;
+#endif
 
         // Ignore transform hint if sticky transform is set or transform to display inverse flag is
         // set. Transform hint should be ignored if the client is expected to always submit buffers
@@ -2103,6 +2241,14 @@ int Surface::connect(int api, const sp<SurfaceListener>& listener, bool reportBu
         }
 
         mConsumerRunningBehind = (output.numPendingBuffers >= 2);
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+
+        if (mQtiSurfaceGPPExtn) {
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+            mQtiSurfaceGPPExtn->StoreConnect(api, mListenerProxy, reportBufferRemoval);
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+        }
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
         if (listener && listener->needsDeathNotify()) {
@@ -2150,6 +2296,13 @@ int Surface::disconnect(int api, IGraphicBufferProducer::DisconnectMode mode) {
             mConnectedToCpu = false;
         }
     }
+// QTI_BEGIN: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
+
+    if (mQtiSurfaceGPPExtn) {
+        mQtiSurfaceGPPExtn->Disconnect(api, &mGraphicBufferProducer);
+    }
+
+// QTI_END: 2024-06-26: Video: gui: Introduce QTI Extensions in AOSP for Game Post Processing.
 
 #if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_PLATFORM_API_IMPROVEMENTS)
     if (mSurfaceDeathListener != nullptr) {
@@ -2190,7 +2343,11 @@ int Surface::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
         *outFence = Fence::NO_FENCE;
     }
 
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int i = 0; i < (int)mSlots.size(); i++) {
+#else
     for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
+#endif
         if (mSlots[i].buffer != nullptr &&
                 mSlots[i].buffer->getId() == buffer->getId()) {
             if (mReportRemovedBuffers) {
@@ -2203,17 +2360,47 @@ int Surface::detachNextBuffer(sp<GraphicBuffer>* outBuffer,
     return NO_ERROR;
 }
 
+int Surface::isBufferOwned(const sp<GraphicBuffer>& buffer, bool* outIsOwned) const {
+    ATRACE_CALL();
+
+    if (buffer == nullptr) {
+        ALOGE("%s: Bad input, buffer was null", __FUNCTION__);
+        return BAD_VALUE;
+    }
+    if (outIsOwned == nullptr) {
+        ALOGE("%s: Bad input, output was null", __FUNCTION__);
+        return BAD_VALUE;
+    }
+
+    Mutex::Autolock lock(mMutex);
+
+    int slot = this->getSlotFromBufferLocked(buffer->getNativeBuffer());
+    if (slot == BAD_VALUE) {
+        ALOGV("%s: Buffer %" PRIu64 " is not owned", __FUNCTION__, buffer->getId());
+        *outIsOwned = false;
+        return NO_ERROR;
+    } else if (slot < 0) {
+        ALOGV("%s: Buffer %" PRIu64 " look up failed (%d)", __FUNCTION__, buffer->getId(), slot);
+        *outIsOwned = false;
+        return slot;
+    }
+
+    *outIsOwned = true;
+    return NO_ERROR;
+}
+
 int Surface::attachBuffer(ANativeWindowBuffer* buffer)
 {
     ATRACE_CALL();
-    ALOGV("Surface::attachBuffer");
+    sp<GraphicBuffer> graphicBuffer(static_cast<GraphicBuffer*>(buffer));
+
+    ALOGV("Surface::attachBuffer bufferId=%" PRIu64, graphicBuffer->getId());
 
     Mutex::Autolock lock(mMutex);
     if (mReportRemovedBuffers) {
         mRemovedBuffers.clear();
     }
 
-    sp<GraphicBuffer> graphicBuffer(static_cast<GraphicBuffer*>(buffer));
     uint32_t priorGeneration = graphicBuffer->mGenerationNumber;
     graphicBuffer->mGenerationNumber = mGenerationNumber;
     int32_t attachedSlot = -1;
@@ -2292,8 +2479,35 @@ int Surface::setMaxDequeuedBufferCount(int maxDequeuedBuffers) {
     ALOGV("Surface::setMaxDequeuedBufferCount");
     Mutex::Autolock lock(mMutex);
 
-    status_t err = mGraphicBufferProducer->setMaxDequeuedBufferCount(
-            maxDequeuedBuffers);
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    if (maxDequeuedBuffers > BufferQueueDefs::NUM_BUFFER_SLOTS && !mIsSlotExpansionAllowed) {
+        return BAD_VALUE;
+    }
+
+    int minUndequeuedBuffers = 0;
+    status_t err = mGraphicBufferProducer->query(NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS,
+                                                 &minUndequeuedBuffers);
+    if (err != OK) {
+        ALOGE("IGraphicBufferProducer::query(NATIVE_WINDOW_MIN_UNDEQUEUED_BUFFERS) returned %s",
+              strerror(-err));
+        return err;
+    }
+
+    if (maxDequeuedBuffers > (int)mSlots.size()) {
+        int newSlotCount = minUndequeuedBuffers + maxDequeuedBuffers;
+        err = mGraphicBufferProducer->extendSlotCount(newSlotCount);
+        if (err != OK) {
+            ALOGE("IGraphicBufferProducer::extendSlotCount(%d) returned %s", newSlotCount,
+                  strerror(-err));
+            return err;
+        }
+
+        mSlots.resize(newSlotCount);
+    }
+    err = mGraphicBufferProducer->setMaxDequeuedBufferCount(maxDequeuedBuffers);
+#else
+    status_t err = mGraphicBufferProducer->setMaxDequeuedBufferCount(maxDequeuedBuffers);
+#endif
     ALOGE_IF(err, "IGraphicBufferProducer::setMaxDequeuedBufferCount(%d) "
             "returned %s", maxDequeuedBuffers, strerror(-err));
 
@@ -2501,7 +2715,11 @@ void Surface::freeAllBuffers() {
         ALOGE("%s: %zu buffers were freed while being dequeued!",
                 __FUNCTION__, mDequeuedSlots.size());
     }
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+    for (int i = 0; i < (int)mSlots.size(); i++) {
+#else
     for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
+#endif
         mSlots[i].buffer = nullptr;
     }
 }
@@ -2510,7 +2728,11 @@ status_t Surface::getAndFlushBuffersFromSlots(const std::vector<int32_t>& slots,
         std::vector<sp<GraphicBuffer>>* outBuffers) {
     ALOGV("Surface::getAndFlushBuffersFromSlots");
     for (int32_t i : slots) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+        if (i < 0 || i >= (int)mSlots.size()) {
+#else
         if (i < 0 || i >= NUM_BUFFER_SLOTS) {
+#endif
             ALOGE("%s: Invalid slotIndex: %d", __FUNCTION__, i);
             return BAD_VALUE;
         }
@@ -2670,7 +2892,11 @@ status_t Surface::lock(
             newDirtyRegion.set(bounds);
             mDirtyRegion.clear();
             Mutex::Autolock lock(mMutex);
-            for (size_t i=0 ; i<NUM_BUFFER_SLOTS ; i++) {
+#if COM_ANDROID_GRAPHICS_LIBGUI_FLAGS(WB_UNLIMITED_SLOTS)
+            for (int i = 0; i < (int)mSlots.size(); i++) {
+#else
+            for (int i = 0; i < NUM_BUFFER_SLOTS; i++) {
+#endif
                 mSlots[i].dirtyRegion.clear();
             }
         }

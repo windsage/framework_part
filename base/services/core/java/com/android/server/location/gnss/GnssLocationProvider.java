@@ -132,6 +132,9 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+//T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 start
+import com.transsion.hubcore.server.location.ITranLocation;
+//T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 end
 /**
  * A GNSS implementation of LocationProvider used by LocationManager.
  *
@@ -1106,7 +1109,9 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
         } catch (RemoteException e) {
             Log.w(TAG, "RemoteException", e);
         }
-
+        //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 start
+        ITranLocation.Instance().noteGpsChanged(mClientSource, source);
+        //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 end
         // (2) Inform AppOps service about the list of changes to UIDs.
 
         // TODO: this doesn't seem correct, work chain attribution tag != package?
@@ -1119,6 +1124,9 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
                 for (WorkChain newChain : newChains) {
                     mAppOps.startOpNoThrow(AppOpsManager.OP_GPS, newChain.getAttributionUid(),
                             newChain.getAttributionTag());
+                    //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 start
+                    ITranLocation.Instance().hookUpdateGps(newChain.getAttributionUid(), newChain.getAttributionTag(), true);
+                    //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 end
                 }
             }
 
@@ -1126,6 +1134,9 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
                 for (WorkChain goneChain : goneChains) {
                     mAppOps.finishOp(AppOpsManager.OP_GPS, goneChain.getAttributionUid(),
                             goneChain.getAttributionTag());
+                    //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 start
+                    ITranLocation.Instance().hookUpdateGps(goneChain.getAttributionUid(), goneChain.getAttributionTag(), false);
+                    //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 end
                 }
             }
 
@@ -1142,6 +1153,9 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
             // Update sources that were not previously tracked.
             if (newWork != null) {
                 for (int i = 0; i < newWork.size(); i++) {
+                    //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 start
+                    ITranLocation.Instance().hookUpdateGps(newWork.getUid(i), newWork.getPackageName(i), true);
+                    //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 end
                     mAppOps.startOpNoThrow(AppOpsManager.OP_GPS,
                             newWork.getUid(i), newWork.getPackageName(i));
                 }
@@ -1150,6 +1164,9 @@ public class GnssLocationProvider extends AbstractLocationProvider implements
             // Update sources that are no longer tracked.
             if (goneWork != null) {
                 for (int i = 0; i < goneWork.size(); i++) {
+                    //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 start
+                    ITranLocation.Instance().hookUpdateGps(goneWork.getUid(i), goneWork.getPackageName(i), false);
+                    //T-HUB Core[SPD]: add for PROCMANA-235 by yiying.wang 20231025 end
                     mAppOps.finishOp(AppOpsManager.OP_GPS, goneWork.getUid(i),
                             goneWork.getPackageName(i));
                 }

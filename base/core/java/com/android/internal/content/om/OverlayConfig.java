@@ -57,7 +57,10 @@ import java.util.function.Supplier;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-
+//T-HUB core[SDD]: add by jiangping.guo for thub-res overlay 20230222 start
+import com.transsion.hubcore.content.om.ITranOverlayConfig;
+import com.transsion.hubcore.content.om.ITranOverlayConfigTroy;
+//T-HUB core[SDD]: add by jiangping.guo for thub-res overlay 20230222 end
 /**
  * Responsible for reading overlay configuration files and handling queries of overlay mutability,
  * default-enabled state, and priority.
@@ -555,7 +558,9 @@ public class OverlayConfig {
 
             idmapPaths.addAll(Arrays.asList(idmaps));
         }
-
+        //T-HUB core[SDD]: add by jiangping.guo for thub-res overlay 20230222 start
+        ITranOverlayConfig.Instance().getIdmapPath(idmapPaths, new TranOverlayConfigTroy(this));
+        //T-HUB core[SDD]: add by jiangping.guo for thub-res overlay 20230222 end
         return idmapPaths.toArray(new String[0]);
     }
 
@@ -600,5 +605,29 @@ public class OverlayConfig {
     public String getPartitionOrder() {
         return mPartitionOrder;
     }
+    //T-HUB core[SDD]: add by jiangping.guo for thub-res overlay 20230222 start
+    public static class TranOverlayConfigTroy implements ITranOverlayConfigTroy {
+        private static OverlayConfig mOverlayConfig;
 
+        public TranOverlayConfigTroy(OverlayConfig overlayConfig) {
+            this.mOverlayConfig = overlayConfig;
+        }
+
+        @Override
+        public ArrayList<Configuration> getSortedOverlays() {
+            return mOverlayConfig.getSortedOverlays();
+        }
+
+        @Override
+        public String[] createIdmap(@NonNull String targetPath,
+            @NonNull String[] overlayPath, @NonNull String[] policies, boolean enforceOverlayable){
+            return mOverlayConfig.createIdmap(targetPath,overlayPath,policies,enforceOverlayable);
+        }
+
+        @Override
+        public IdmapInvocation getIdmapInvocation(boolean enforceOverlayable, String policy){
+            return (new IdmapInvocation(enforceOverlayable,policy));
+        }
+    }
+    //T-HUB core[SDD]: add by jiangping.guo for thub-res overlay 20230222 end
 }

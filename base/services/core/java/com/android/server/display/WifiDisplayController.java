@@ -40,6 +40,9 @@ import android.net.wifi.p2p.WifiP2pManager.GroupInfoListener;
 import android.net.wifi.p2p.WifiP2pManager.PeerListListener;
 import android.net.wifi.p2p.WifiP2pWfdInfo;
 import android.os.Handler;
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+import android.os.SystemProperties;
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
 import android.provider.Settings;
 import android.util.Slog;
 import android.view.Surface;
@@ -48,6 +51,10 @@ import com.android.internal.util.DumpUtils;
 import com.android.server.display.utils.DebugUtils;
 
 import java.io.PrintWriter;
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+import java.lang.StackTraceElement;
+import java.lang.Thread;
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -74,6 +81,10 @@ final class WifiDisplayController implements DumpUtils.Dump {
     // To enable these logs, run:
     // 'adb shell setprop persist.log.tag.WifiDisplayController DEBUG && adb reboot'
     private static final boolean DEBUG = DebugUtils.isDebuggable(TAG);
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+    private static final boolean DEBUGV =
+            SystemProperties.getBoolean("persist.vendor.debug.wfdcdbgv",false);
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
 
     private static final int DEFAULT_CONTROL_PORT = 7236;
     private static final int MAX_THROUGHPUT = 50;
@@ -99,7 +110,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
     private final Listener mListener;
 
     private WifiP2pManager mWifiP2pManager;
+// QTI_BEGIN: 2018-06-22: WLAN: WiFiDisplayController: Defer the P2P Initialization from its constructor.
     private Channel mWifiP2pChannel;
+// QTI_END: 2018-06-22: WLAN: WiFiDisplayController: Defer the P2P Initialization from its constructor.
 
     private boolean mWifiP2pEnabled;
     private boolean mWfdEnabled;
@@ -140,6 +153,12 @@ final class WifiDisplayController implements DumpUtils.Dump {
     // Number of connection retries remaining.
     private int mConnectionRetriesLeft;
 
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+    // The Extended remote display that is listening on the connection.
+    // Created after the Wifi P2P network is connected.
+    private Object mExtRemoteDisplay;
+
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
     // The remote display that is listening on the connection.
     // Created after the Wifi P2P network is connected.
     private RemoteDisplay mRemoteDisplay;
@@ -250,6 +269,37 @@ final class WifiDisplayController implements DumpUtils.Dump {
         }
     }
 
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+    private void dump() {
+        Slog.d(TAG,"mWifiDisplayOnSetting=" + mWifiDisplayOnSetting);
+        Slog.d(TAG,"mWifiP2pEnabled=" + mWifiP2pEnabled);
+        Slog.d(TAG,"mWfdEnabled=" + mWfdEnabled);
+        Slog.d(TAG,"mWfdEnabling=" + mWfdEnabling);
+        Slog.d(TAG,"mNetworkInfo=" + mNetworkInfo);
+        Slog.d(TAG,"mScanRequested=" + mScanRequested);
+        Slog.d(TAG,"mDiscoverPeersInProgress=" + mDiscoverPeersInProgress);
+        Slog.d(TAG,"mDesiredDevice=" + describeWifiP2pDevice(mDesiredDevice));
+        Slog.d(TAG,"mConnectingDisplay=" + describeWifiP2pDevice(mConnectingDevice));
+        Slog.d(TAG,"mDisconnectingDisplay=" + describeWifiP2pDevice(mDisconnectingDevice));
+        Slog.d(TAG,"mCancelingDisplay=" + describeWifiP2pDevice(mCancelingDevice));
+        Slog.d(TAG,"mConnectedDevice=" + describeWifiP2pDevice(mConnectedDevice));
+        Slog.d(TAG,"mConnectionRetriesLeft=" + mConnectionRetriesLeft);
+        Slog.d(TAG,"mRemoteDisplay=" + mRemoteDisplay);
+        Slog.d(TAG,"mRemoteDisplayInterface=" + mRemoteDisplayInterface);
+        Slog.d(TAG,"mRemoteDisplayConnected=" + mRemoteDisplayConnected);
+        Slog.d(TAG,"mAdvertisedDisplay=" + mAdvertisedDisplay);
+        Slog.d(TAG,"mAdvertisedDisplaySurface=" + mAdvertisedDisplaySurface);
+        Slog.d(TAG,"mAdvertisedDisplayWidth=" + mAdvertisedDisplayWidth);
+        Slog.d(TAG,"mAdvertisedDisplayHeight=" + mAdvertisedDisplayHeight);
+        Slog.d(TAG,"mAdvertisedDisplayFlags=" + mAdvertisedDisplayFlags);
+
+        Slog.d(TAG,"mAvailableWifiDisplayPeers: size=" + mAvailableWifiDisplayPeers.size());
+        for (WifiP2pDevice device : mAvailableWifiDisplayPeers) {
+            Slog.d(TAG,"  " + describeWifiP2pDevice(device));
+        }
+    }
+
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
     public void requestStartScan() {
         if (!mScanRequested) {
             mScanRequested = true;
@@ -300,7 +350,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
                 wfdInfo.setSessionAvailable(true);
                 wfdInfo.setControlPort(DEFAULT_CONTROL_PORT);
                 wfdInfo.setMaxThroughput(MAX_THROUGHPUT);
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                 mWifiP2pManager.setWfdInfo(mWifiP2pChannel, wfdInfo, new ActionListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                     @Override
                     public void onSuccess() {
                         if (DEBUG) {
@@ -328,7 +380,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
             if (mWfdEnabled || mWfdEnabling) {
                 WifiP2pWfdInfo wfdInfo = new WifiP2pWfdInfo();
                 wfdInfo.setEnabled(false);
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                 mWifiP2pManager.setWfdInfo(mWifiP2pChannel, wfdInfo, new ActionListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                     @Override
                     public void onSuccess() {
                         if (DEBUG) {
@@ -371,7 +425,11 @@ final class WifiDisplayController implements DumpUtils.Dump {
     }
 
     private void updateScanState() {
-        if (mScanRequested && mWfdEnabled && mDesiredDevice == null) {
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+        if (mScanRequested && mWfdEnabled &&
+            (mDesiredDevice == null) && (mConnectedDevice == null)
+                && (mDisconnectingDevice == null)) {
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
             if (!mDiscoverPeersInProgress) {
                 Slog.i(TAG, "Starting Wifi display scan.");
                 mDiscoverPeersInProgress = true;
@@ -397,7 +455,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
     }
 
     private void tryDiscoverPeers() {
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
         mWifiP2pManager.discoverPeers(mWifiP2pChannel, new ActionListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
             @Override
             public void onSuccess() {
                 if (DEBUG) {
@@ -425,7 +485,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
     }
 
     private void stopPeerDiscovery() {
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
         mWifiP2pManager.stopPeerDiscovery(mWifiP2pChannel, new ActionListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
             @Override
             public void onSuccess() {
                 if (DEBUG) {
@@ -443,7 +505,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
     }
 
     private void requestPeers() {
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
         mWifiP2pManager.requestPeers(mWifiP2pChannel, new PeerListListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
             @Override
             public void onPeersAvailable(WifiP2pDeviceList peers) {
                 if (DEBUG) {
@@ -547,6 +611,12 @@ final class WifiDisplayController implements DumpUtils.Dump {
             return;
         }
 
+// QTI_BEGIN: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+        if (handlePreExistingConnection(device)) {
+            Slog.i(TAG, "already handle the preexisting p2p connection status");
+            return;
+        }
+// QTI_END: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
         mDesiredDevice = device;
         mConnectionRetriesLeft = CONNECT_MAX_RETRIES;
         updateConnection();
@@ -571,20 +641,41 @@ final class WifiDisplayController implements DumpUtils.Dump {
      * connection is established (or not).
      */
     private void updateConnection() {
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+        if(DEBUGV) {
+            //new Throwable("WFD_DBG").printStackTrace();
+            StackTraceElement[] st = Thread.currentThread().getStackTrace();
+            for(int i = 2 ; i < st.length && i < 5; i++) {
+                Slog.i(TAG,st[i].toString());
+            }
+            dump();
+        }
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
         // Step 0. Stop scans if necessary to prevent interference while connected.
         // Resume scans later when no longer attempting to connect.
         updateScanState();
 
         // Step 1. Before we try to connect to a new device, tell the system we
         // have disconnected from the old one.
-        if (mRemoteDisplay != null && mConnectedDevice != mDesiredDevice) {
-            Slog.i(TAG, "Stopped listening for RTSP connection on " + mRemoteDisplayInterface
-                    + " from Wifi display: " + mConnectedDevice.deviceName);
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+        if ((mRemoteDisplay != null || mExtRemoteDisplay != null) &&
+            (mConnectedDevice != mDesiredDevice)||
+            (mRemoteDisplayInterface != null && mConnectedDevice == null)) {
+            Slog.i(TAG, "Stopped listening for RTSP connection on "
+                    + mRemoteDisplayInterface);
 
-            mRemoteDisplay.dispose();
+            if(mRemoteDisplay != null) {
+                mRemoteDisplay.dispose();
+            } else if(mExtRemoteDisplay != null) {
+                ExtendedRemoteDisplayHelper.dispose(mExtRemoteDisplay);
+            }
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+            mExtRemoteDisplay = null;
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
             mRemoteDisplay = null;
             mRemoteDisplayInterface = null;
-            mRemoteDisplayConnected = false;
             mHandler.removeCallbacks(mRtspTimeout);
 
             mWifiP2pManager.setMiracastMode(WifiP2pManager.MIRACAST_DISABLED);
@@ -594,7 +685,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
         }
 
         // Step 2. Before we try to connect to a new device, disconnect from the old one.
-        if (mDisconnectingDevice != null) {
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+        if (mRemoteDisplayConnected || mDisconnectingDevice != null) {
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
             return; // wait for asynchronous callback
         }
         if (mConnectedDevice != null && mConnectedDevice != mDesiredDevice) {
@@ -606,7 +699,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
             unadvertiseDisplay();
 
             final WifiP2pDevice oldDevice = mDisconnectingDevice;
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
             mWifiP2pManager.removeGroup(mWifiP2pChannel, new ActionListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                 @Override
                 public void onSuccess() {
                     Slog.i(TAG, "Disconnected from Wifi display: " + oldDevice.deviceName);
@@ -644,7 +739,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
             mHandler.removeCallbacks(mConnectionTimeout);
 
             final WifiP2pDevice oldDevice = mCancelingDevice;
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
             mWifiP2pManager.cancelConnect(mWifiP2pChannel, new ActionListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                 @Override
                 public void onSuccess() {
                     Slog.i(TAG, "Canceled connection to Wifi display: " + oldDevice.deviceName);
@@ -678,6 +775,82 @@ final class WifiDisplayController implements DumpUtils.Dump {
             return; // done
         }
 
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+        //Before we connect, we need to set the oldDevice to the desiredDevice to check
+        //the device on receiving callbacks from the Remote display modules
+        final WifiP2pDevice oldDevice = mDesiredDevice;
+        RemoteDisplay.Listener listener = new RemoteDisplay.Listener() {
+        @Override
+            public void onDisplayConnected(Surface surface,
+                        int width, int height, int flags, int session) {
+                 if (mConnectedDevice == oldDevice && !mRemoteDisplayConnected) {
+                    Slog.i(TAG, "Opened RTSP connection with Wifi display: "
+                        + mConnectedDevice.deviceName);
+                    mRemoteDisplayConnected = true;
+                    mHandler.removeCallbacks(mRtspTimeout);
+
+                 if (mWifiDisplayCertMode) {
+                     mListener.onDisplaySessionInfo(
+                     getSessionInfo(mConnectedDeviceGroupInfo, session));
+                 }
+
+                 final WifiDisplay display = createWifiDisplay(mConnectedDevice);
+                 advertiseDisplay(display, surface, width, height, flags);
+                 }
+            }
+
+            @Override
+            public void onDisplayDisconnected() {
+                if (mConnectedDevice == oldDevice) {
+                    Slog.i(TAG, "Closed RTSP connection with Wifi display: "
+                        + mConnectedDevice.deviceName);
+                    mHandler.removeCallbacks(mRtspTimeout);
+                    mRemoteDisplayConnected = false;
+                    disconnect();
+                }
+            }
+
+            @Override
+            public void onDisplayError(int error) {
+                if (mConnectedDevice == oldDevice) {
+                    Slog.i(TAG, "Lost RTSP connection with Wifi display due to error "
+                        + error + ": " + mConnectedDevice.deviceName);
+                    mHandler.removeCallbacks(mRtspTimeout);
+                    handleConnectionFailure(false);
+                }
+            }
+        };
+
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+// QTI_BEGIN: 2019-05-30: WLAN: WifiDisplayController: Changes to allow R2 session from hybrid
+        int WFDR2Info = SystemProperties.getInt("persist.vendor.setWFDInfo.R2",0);
+        Slog.i(TAG, "WFDR2info is: " + WFDR2Info);
+       /*R1 source - R1 sink ->0
+        *R1 source - R2 sink ->1
+        *R2 source - R1 sink ->2
+        *R2 source - R2 sink ->3*/
+        if(WFDR2Info==2 || WFDR2Info==3){
+// QTI_END: 2019-05-30: WLAN: WifiDisplayController: Changes to allow R2 session from hybrid
+            WifiP2pWfdInfo wfdInfo = mThisDevice.getWfdInfo();
+            wfdInfo.setR2DeviceType(WifiP2pWfdInfo.DEVICE_TYPE_WFD_SOURCE);
+            mWifiP2pManager.setWfdInfo(mWifiP2pChannel, wfdInfo, new ActionListener() {
+// QTI_BEGIN: 2019-05-30: WLAN: WifiDisplayController: Changes to allow R2 session from hybrid
+                    @Override
+                    public void onSuccess() {
+                        if (DEBUG) {
+                            Slog.i(TAG, "Successfully set WFD R2 info.");
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(int reason) {
+                        if (DEBUG) {
+                            Slog.i(TAG, "Failed to set WFD R2 info with reason " + reason + ".");
+                        }
+                    }
+                });
+        }
+// QTI_END: 2019-05-30: WLAN: WifiDisplayController: Changes to allow R2 session from hybrid
         // Step 5. Try to connect.
         if (mConnectedDevice == null && mConnectingDevice == null) {
             Slog.i(TAG, "Connecting to Wifi display: " + mDesiredDevice.deviceName);
@@ -698,13 +871,34 @@ final class WifiDisplayController implements DumpUtils.Dump {
             config.wps = wps;
             config.deviceAddress = mConnectingDevice.deviceAddress;
             // Helps with STA & P2P concurrency
-            config.groupOwnerIntent = WifiP2pConfig.GROUP_OWNER_INTENT_MIN;
+// QTI_BEGIN: 2022-10-07: WLAN: Merge "WifiDisplayController: Introduce system property to set GO Intent" into t-keystone-qcom-dev
+            int WFDGoIntent = SystemProperties.getInt("persist.vendor.sys.debug.wfd.gointent", WifiP2pConfig.GROUP_OWNER_INTENT_MIN);
+            config.groupOwnerIntent = WFDGoIntent;
+            Slog.i(TAG, "WFD P2P GO Intent value: " + config.groupOwnerIntent);
+// QTI_END: 2022-10-07: WLAN: Merge "WifiDisplayController: Introduce system property to set GO Intent" into t-keystone-qcom-dev
 
             WifiDisplay display = createWifiDisplay(mConnectingDevice);
             advertiseDisplay(display, null, 0, 0, 0);
 
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+            if(ExtendedRemoteDisplayHelper.isAvailable()&&
+                   mExtRemoteDisplay == null){
+               final int port = getPortNumber(mDesiredDevice);
+               //IP is superfluous for WFD source, and we don't have one at this stage anyway since
+               //P2P connection hasn't been established yet
+               final String iface = "255.255.255.255:" + port;
+               mRemoteDisplayInterface = iface;
+               Slog.i(TAG, "Listening for RTSP connection on " + iface
+                   + " from Wifi display: " + mDesiredDevice.deviceName);
+               mExtRemoteDisplay = ExtendedRemoteDisplayHelper.listen(iface,
+                        listener, mHandler, mContext);
+            }
+
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
             final WifiP2pDevice newDevice = mDesiredDevice;
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
             mWifiP2pManager.connect(mWifiP2pChannel, config, new ActionListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                 @Override
                 public void onSuccess() {
                     // The connection may not yet be established.  We still need to wait
@@ -740,54 +934,18 @@ final class WifiDisplayController implements DumpUtils.Dump {
 
             mWifiP2pManager.setMiracastMode(WifiP2pManager.MIRACAST_SOURCE);
 
-            final WifiP2pDevice oldDevice = mConnectedDevice;
             final int port = getPortNumber(mConnectedDevice);
             final String iface = addr.getHostAddress() + ":" + port;
             mRemoteDisplayInterface = iface;
 
-            Slog.i(TAG, "Listening for RTSP connection on " + iface
-                    + " from Wifi display: " + mConnectedDevice.deviceName);
-
-            mRemoteDisplay = RemoteDisplay.listen(iface, new RemoteDisplay.Listener() {
-                @Override
-                public void onDisplayConnected(Surface surface,
-                        int width, int height, int flags, int session) {
-                    if (mConnectedDevice == oldDevice && !mRemoteDisplayConnected) {
-                        Slog.i(TAG, "Opened RTSP connection with Wifi display: "
-                                + mConnectedDevice.deviceName);
-                        mRemoteDisplayConnected = true;
-                        mHandler.removeCallbacks(mRtspTimeout);
-
-                        if (mWifiDisplayCertMode) {
-                            mListener.onDisplaySessionInfo(
-                                    getSessionInfo(mConnectedDeviceGroupInfo, session));
-                        }
-
-                        final WifiDisplay display = createWifiDisplay(mConnectedDevice);
-                        advertiseDisplay(display, surface, width, height, flags);
-                    }
-                }
-
-                @Override
-                public void onDisplayDisconnected() {
-                    if (mConnectedDevice == oldDevice) {
-                        Slog.i(TAG, "Closed RTSP connection with Wifi display: "
-                                + mConnectedDevice.deviceName);
-                        mHandler.removeCallbacks(mRtspTimeout);
-                        disconnect();
-                    }
-                }
-
-                @Override
-                public void onDisplayError(int error) {
-                    if (mConnectedDevice == oldDevice) {
-                        Slog.i(TAG, "Lost RTSP connection with Wifi display due to error "
-                                + error + ": " + mConnectedDevice.deviceName);
-                        mHandler.removeCallbacks(mRtspTimeout);
-                        handleConnectionFailure(false);
-                    }
-                }
-            }, mHandler, mContext.getOpPackageName());
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+            if(!ExtendedRemoteDisplayHelper.isAvailable()){
+               Slog.i(TAG, "Listening for RTSP connection on " + iface
+                   + " from Wifi display: " + mConnectedDevice.deviceName);
+               mRemoteDisplay = RemoteDisplay.listen(iface, listener,
+                       mHandler, mContext.getOpPackageName());
+            }
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
 
             // Use extended timeout value for certification, as some tests require user inputs
             int rtspTimeout = mWifiDisplayCertMode ?
@@ -798,7 +956,9 @@ final class WifiDisplayController implements DumpUtils.Dump {
     }
 
     private WifiDisplaySessionInfo getSessionInfo(WifiP2pGroup info, int session) {
-        if (info == null) {
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+        if (info == null || info.getOwner() == null) {
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
             return null;
         }
         Inet4Address addr = getInterfaceAddress(info);
@@ -836,9 +996,17 @@ final class WifiDisplayController implements DumpUtils.Dump {
         mNetworkInfo = networkInfo;
         if (mWfdEnabled && networkInfo.isConnected()) {
             if (mDesiredDevice != null || mWifiDisplayCertMode) {
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                 mWifiP2pManager.requestGroupInfo(mWifiP2pChannel, new GroupInfoListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
                     @Override
                     public void onGroupInfoAvailable(WifiP2pGroup info) {
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+                        if(info == null) {
+                           return;
+                        }
+
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
                         if (DEBUG) {
                             Slog.d(TAG, "Received group info: " + describeWifiP2pGroup(info));
                         }
@@ -858,8 +1026,11 @@ final class WifiDisplayController implements DumpUtils.Dump {
                         }
 
                         if (mWifiDisplayCertMode) {
-                            boolean owner = info.getOwner().deviceAddress
-                                    .equals(mThisDevice.deviceAddress);
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+                            boolean owner = (info.getOwner() != null)?
+                                      info.getOwner().deviceAddress
+                                    .equals(mThisDevice.deviceAddress):false;
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
                             if (owner && info.getClientList().isEmpty()) {
                                 // this is the case when we started Autonomous GO,
                                 // and no client has connected, save group info
@@ -897,6 +1068,14 @@ final class WifiDisplayController implements DumpUtils.Dump {
                 disconnect();
             }
 
+// QTI_BEGIN: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+            if (mDesiredDevice != null) {
+                Slog.i(TAG, "reconnect new device: " + mDesiredDevice.deviceName);
+                updateConnection();
+                return;
+            }
+
+// QTI_END: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
             // After disconnection for a group, for some reason we have a tendency
             // to get a peer change notification with an empty list of peers.
             // Perform a fresh scan.
@@ -929,7 +1108,10 @@ final class WifiDisplayController implements DumpUtils.Dump {
         @Override
         public void run() {
             if (mConnectedDevice != null
-                    && mRemoteDisplay != null && !mRemoteDisplayConnected) {
+// QTI_BEGIN: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
+                    && (mRemoteDisplay != null || mExtRemoteDisplay != null)
+                    && !mRemoteDisplayConnected) {
+// QTI_END: 2018-04-10: Video: Merge changes for launching wifidisplay from system settings
                 Slog.i(TAG, "Timed out waiting for Wifi display RTSP connection after "
                         + RTSP_TIMEOUT_SECONDS + " seconds: "
                         + mConnectedDevice.deviceName);
@@ -1013,6 +1195,53 @@ final class WifiDisplayController implements DumpUtils.Dump {
                 mAdvertisedDisplayFlags);
     }
 
+// QTI_BEGIN: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+    private boolean handlePreExistingConnection(final WifiP2pDevice device) {
+        if (mNetworkInfo == null || !mNetworkInfo.isConnected() || mWifiDisplayCertMode) {
+            return false;
+        }
+        Slog.i(TAG, "handle the preexisting p2p connection status");
+// QTI_END: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
+        mWifiP2pManager.requestGroupInfo(mWifiP2pChannel, new GroupInfoListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
+// QTI_BEGIN: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+            @Override
+            public void onGroupInfoAvailable(WifiP2pGroup info) {
+                if (info == null) {
+                    return;
+                }
+// QTI_END: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+                if (contains(info, device)) {
+// QTI_BEGIN: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+                    Slog.i(TAG, "already connected to the desired device: " + device.deviceName);
+                    updateConnection();
+                    handleConnectionChanged(mNetworkInfo);
+                } else {
+// QTI_END: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+// QTI_BEGIN: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
+                    mWifiP2pManager.removeGroup(mWifiP2pChannel, new ActionListener() {
+// QTI_END: 2020-04-27: WLAN: Revert 'WiFiDisplayController: Defer the P2P Initialization from its constructor.'
+// QTI_BEGIN: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
+                        @Override
+                        public void onSuccess() {
+                            Slog.i(TAG, "disconnect the old device");
+                        }
+
+                        @Override
+                        public void onFailure(int reason) {
+                            Slog.i(TAG, "Failed to disconnect the old device: reason=" + reason);
+                        }
+                    });
+                }
+            }
+        });
+        mDesiredDevice = device;
+        mConnectionRetriesLeft = CONNECT_MAX_RETRIES;
+        return true;
+    }
+
+// QTI_END: 2018-08-28: Video: WifiDisplayController: handle preexisting p2p connection status
     private static Inet4Address getInterfaceAddress(WifiP2pGroup info) {
         NetworkInterface iface;
         try {

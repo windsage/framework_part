@@ -14,6 +14,14 @@
  * limitations under the License.
  */
 
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+/**
+ * Changes from Qualcomm Innovation Center are provided under the following license:
+ * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
+
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
 package com.android.keyguard;
 
 import static com.android.systemui.Flags.simPinUseSlotId;
@@ -47,7 +55,11 @@ import com.android.systemui.keyguard.WakefulnessLifecycle;
 import com.android.systemui.res.R;
 import com.android.systemui.statusbar.pipeline.satellite.ui.viewmodel.DeviceBasedSatelliteViewModel;
 import com.android.systemui.statusbar.pipeline.wifi.data.repository.WifiRepository;
+import com.android.systemui.statusbar.policy.FiveGServiceClient;
 import com.android.systemui.telephony.TelephonyListenerManager;
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+import com.android.systemui.util.CarrierNameCustomization;
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
 import com.android.systemui.util.kotlin.JavaAdapter;
 
 import kotlinx.coroutines.Job;
@@ -114,7 +126,10 @@ public class CarrierTextManager {
                     if (callback != null) callback.startedGoingToSleep();
                 }
             };
-
+    private FiveGServiceClient mFiveGServiceClient;
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+    private CarrierNameCustomization mCarrierNameCustomization;
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
     @VisibleForTesting
     protected final KeyguardUpdateMonitorCallback mCallback = new KeyguardUpdateMonitorCallback() {
         @Override
@@ -199,11 +214,17 @@ public class CarrierTextManager {
             WakefulnessLifecycle wakefulnessLifecycle,
             @Main Executor mainExecutor,
             @Background Executor bgExecutor,
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
             KeyguardUpdateMonitor keyguardUpdateMonitor,
-            CarrierTextManagerLogger logger) {
-
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+            CarrierTextManagerLogger logger,
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+            CarrierNameCustomization carrierNameCustomization) {
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
         mContext = context;
-        mIsEmergencyCallCapable = telephonyManager.isVoiceCapable();
+        boolean hasTelephony = mContext.getPackageManager()
+                .hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
+        mIsEmergencyCallCapable = telephonyManager.isVoiceCapable() && hasTelephony;
 
         mShowAirplaneMode = showAirplaneMode;
         mShowMissingSim = showMissingSim;
@@ -221,9 +242,7 @@ public class CarrierTextManager {
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mLogger = logger;
         mBgExecutor.execute(() -> {
-            boolean supported = mContext.getPackageManager()
-                    .hasSystemFeature(PackageManager.FEATURE_TELEPHONY);
-            if (supported && mNetworkSupported.compareAndSet(false, supported)) {
+            if (hasTelephony && mNetworkSupported.compareAndSet(false, hasTelephony)) {
                 // This will set/remove the listeners appropriately. Note that it will never double
                 // add the listeners.
                 handleSetListening(mCarrierTextCallback);
@@ -232,6 +251,9 @@ public class CarrierTextManager {
                 });
             }
         });
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+        mCarrierNameCustomization = carrierNameCustomization;
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
     }
 
     private TelephonyManager getTelephonyManager() {
@@ -298,6 +320,9 @@ public class CarrierTextManager {
                 // Keyguard update monitor expects callbacks from main thread
                 mMainExecutor.execute(() -> {
                     mWakefulnessLifecycle.addObserver(mWakefulnessObserver);
+// QTI_BEGIN: 2024-03-10: Android_UI: SystemUI: Carrier name customization enhancement
+                    mCarrierNameCustomization.registerCallback(mCallback);
+// QTI_END: 2024-03-10: Android_UI: SystemUI: Carrier name customization enhancement
                 });
                 mTelephonyListenerManager.addActiveDataSubscriptionIdListener(mPhoneStateListener);
                 cancelSatelliteCollectionJob(/* reason= */ "Starting new job");
@@ -322,6 +347,9 @@ public class CarrierTextManager {
             mCarrierTextCallback = null;
             mMainExecutor.execute(() -> {
                 mWakefulnessLifecycle.removeObserver(mWakefulnessObserver);
+// QTI_BEGIN: 2024-03-10: Android_UI: SystemUI: Carrier name customization enhancement
+                mCarrierNameCustomization.removeCallback(mCallback);
+// QTI_END: 2024-03-10: Android_UI: SystemUI: Carrier name customization enhancement
             });
             mTelephonyListenerManager.removeActiveDataSubscriptionIdListener(mPhoneStateListener);
             cancelSatelliteCollectionJob(/* reason= */ "#handleSetListening has null callback");
@@ -349,15 +377,21 @@ public class CarrierTextManager {
         updateCarrierText();
     }
 
-    protected void updateCarrierText() {
+// QTI_BEGIN: 2023-07-13: Android_UI: SystemUI: Follow system settings to switch carrier name language
+    public void updateCarrierText() {
+// QTI_END: 2023-07-13: Android_UI: SystemUI: Follow system settings to switch carrier name language
         Trace.beginSection("CarrierTextManager#updateCarrierText");
         boolean allSimsMissing = true;
         boolean anySimReadyAndInService = false;
+        boolean missingSimsWithSubs = false;
+        boolean showCustomizeName = getContext().getResources().getBoolean(
+                com.android.settingslib.R.bool.config_show_customize_carrier_name);
         CharSequence displayText = null;
         List<SubscriptionInfo> subs = getSubscriptionInfo();
 
         final int numSubs = subs.size();
         final int[] subsIds = new int[numSubs];
+        if (DEBUG) Log.d(TAG, "updateCarrierText(): " + numSubs);
         // This array will contain in position i, the index of subscription in slot ID i.
         // -1 if no subscription in that slot
         final int[] subOrderBySlot = new int[mSimSlotsNumber];
@@ -376,6 +410,21 @@ public class CarrierTextManager {
             int simState = simPinUseSlotId() ? mKeyguardUpdateMonitor.getSimStateForSlotId(slotId)
                     :  mKeyguardUpdateMonitor.getSimState(subId);
             CharSequence carrierName = subs.get(i).getCarrierName();
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+            if (showCustomizeName) {
+                if (mCarrierNameCustomization.isRoamingCustomizationEnabled()
+                        && mCarrierNameCustomization.isRoaming(subId)) {
+                    carrierName = mCarrierNameCustomization.getRoamingCarrierName(subId);
+                } else {
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+// QTI_BEGIN: 2024-03-10: Android_UI: SystemUI: Carrier name customization enhancement
+                    carrierName = mCarrierNameCustomization.
+                            getCustomizeCarrierNameOld(carrierName, subs.get(i));
+// QTI_END: 2024-03-10: Android_UI: SystemUI: Carrier name customization enhancement
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+                }
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+            }
             CharSequence carrierTextForSimState = getCarrierTextForSimState(simState, carrierName);
             mLogger.logUpdateLoopStart(subId, simState, String.valueOf(carrierName));
             if (carrierTextForSimState != null) {
@@ -609,6 +658,9 @@ public class CarrierTextManager {
                 return CarrierTextManager.StatusMode.SimLocked;
             case TelephonyManager.SIM_STATE_PUK_REQUIRED:
                 return CarrierTextManager.StatusMode.SimPukLocked;
+// QTI_BEGIN: 2023-05-24: Android_UI: SystemUI: Fix Carrier name is not displayed on keyguard.
+            case TelephonyManager.SIM_STATE_LOADED:
+// QTI_END: 2023-05-24: Android_UI: SystemUI: Fix Carrier name is not displayed on keyguard.
             case TelephonyManager.SIM_STATE_READY:
                 return CarrierTextManager.StatusMode.Normal;
             case TelephonyManager.SIM_STATE_PERM_DISABLED:
@@ -689,6 +741,9 @@ public class CarrierTextManager {
         private boolean mShowAirplaneMode;
         private boolean mShowMissingSim;
         private String mDebugLocation;
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+        private CarrierNameCustomization mCarrierNameCustomization;
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
 
         @Inject
         public Builder(
@@ -702,8 +757,13 @@ public class CarrierTextManager {
                 WakefulnessLifecycle wakefulnessLifecycle,
                 @Main Executor mainExecutor,
                 @Background Executor bgExecutor,
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
                 KeyguardUpdateMonitor keyguardUpdateMonitor,
-                CarrierTextManagerLogger logger) {
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+                CarrierTextManagerLogger logger,
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+                CarrierNameCustomization carrierNameCustomization) {
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
             mContext = context;
             mSeparator = resources.getString(
                     com.android.internal.R.string.kg_text_message_separator);
@@ -717,6 +777,9 @@ public class CarrierTextManager {
             mBgExecutor = bgExecutor;
             mKeyguardUpdateMonitor = keyguardUpdateMonitor;
             mLogger = logger;
+// QTI_BEGIN: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
+            mCarrierNameCustomization = carrierNameCustomization;
+// QTI_END: 2022-12-13: Android_UI: SystemUI: Display combined carrier names
         }
 
         /** */
@@ -757,7 +820,8 @@ public class CarrierTextManager {
                     mMainExecutor,
                     mBgExecutor,
                     mKeyguardUpdateMonitor,
-                    mLogger);
+                    mLogger,
+                    mCarrierNameCustomization);
         }
     }
 
@@ -833,4 +897,10 @@ public class CarrierTextManager {
          */
         default void finishedWakingUp() {};
     }
+
+// QTI_BEGIN: 2023-07-13: Android_UI: SystemUI: Follow system settings to switch carrier name language
+    public void loadCarrierMap() {
+        mCarrierNameCustomization.loadCarrierMap(getContext());
+    }
+// QTI_END: 2023-07-13: Android_UI: SystemUI: Follow system settings to switch carrier name language
 }

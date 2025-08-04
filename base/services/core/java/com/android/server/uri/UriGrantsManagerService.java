@@ -117,6 +117,9 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
+//SDD:modify AR-202507-001390 by huan.liu5 2025/07/14 start
+import android.os.SystemProperties;
+//SDD:modify AR-202507-001390 by huan.liu5 2025/07/14 end
 
 /** Manages uri grants. */
 public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
@@ -148,6 +151,10 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
     private static final String ATTR_MODE_FLAGS = "modeFlags";
     private static final String ATTR_CREATED_TIME = "createdTime";
     private static final String ATTR_PREFIX = "prefix";
+    //SDD:modify AR-202507-001390 by huan.liu5 2025/07/14 start
+    private final static boolean IS_FANS = SystemProperties.get("persist.sys.fans.support","0").equals("1");
+    private final static String PACKAGE_FEEDBACK = "com.idea.questionnaire";
+    //SDD:modify AR-202507-001390 by huan.liu5 2025/07/14 end
 
     /**
      * Global set of specific {@link Uri} permissions that have been granted.
@@ -1437,6 +1444,11 @@ public class UriGrantsManagerService extends IUriGrantsManager.Stub implements
         }
 
         // Third...  does the caller itself have permission to access this uri?
+        //SDD:modify AR-202507-001390 by huan.liu5 2025/07/14 start
+        if(IS_FANS && PACKAGE_FEEDBACK.equals(targetPkg)){
+            return targetUid;
+        } else
+        //SDD:modify AR-202507-001390 by huan.liu5 2025/07/14 end
         if (!checkHoldingPermissionsUnlocked(pi, grantUri, callingUid, modeFlags)) {
             // Require they hold a strong enough Uri permission
             final boolean res;

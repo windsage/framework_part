@@ -29,6 +29,7 @@
 #include <android-base/strings.h>
 #include <android/dlext.h>
 #include <binder/IServiceManager.h>
+#include <com_android_graphics_graphicsenv_flags.h>
 #include <graphicsenv/IGpuService.h>
 #include <log/log.h>
 #include <nativeloader/dlext_namespaces.h>
@@ -69,6 +70,8 @@ static bool isVndkEnabled() {
     return false;
 }
 } // namespace
+
+namespace graphicsenv_flags = com::android::graphics::graphicsenv::flags;
 
 namespace android {
 
@@ -618,14 +621,60 @@ void GraphicsEnv::setAngleInfo(const std::string& path, const bool shouldUseNati
         mShouldUseAngle = true;
     }
     mShouldUseNativeDriver = shouldUseNativeDriver;
+
+    if (mShouldUseAngle) {
+        updateAngleFeatureOverrides();
+    }
 }
 
 std::string& GraphicsEnv::getPackageName() {
     return mPackageName;
 }
 
+// List of ANGLE features to enable, specified in the Global.Settings value "angle_egl_features".
 const std::vector<std::string>& GraphicsEnv::getAngleEglFeatures() {
     return mAngleEglFeatures;
+}
+
+// List of ANGLE features to override (enabled or disable).
+// The list of overrides is loaded and parsed by GpuService.
+void GraphicsEnv::updateAngleFeatureOverrides() {
+    if (!graphicsenv_flags::angle_feature_overrides()) {
+        return;
+    }
+
+    const sp<IGpuService> gpuService = getGpuService();
+    if (!gpuService) {
+        ALOGE("No GPU service");
+        return;
+    }
+
+    mFeatureOverrides = gpuService->getFeatureOverrides();
+}
+
+void GraphicsEnv::getAngleFeatureOverrides(std::vector<const char*>& enabled,
+                                           std::vector<const char*>& disabled) {
+    if (!graphicsenv_flags::angle_feature_overrides()) {
+        return;
+    }
+
+    for (const FeatureConfig& feature : mFeatureOverrides.mGlobalFeatures) {
+        if (feature.mEnabled) {
+            enabled.push_back(feature.mFeatureName.c_str());
+        } else {
+            disabled.push_back(feature.mFeatureName.c_str());
+        }
+    }
+
+    if (mFeatureOverrides.mPackageFeatures.count(mPackageName)) {
+        for (const FeatureConfig& feature : mFeatureOverrides.mPackageFeatures[mPackageName]) {
+            if (feature.mEnabled) {
+                enabled.push_back(feature.mFeatureName.c_str());
+            } else {
+                disabled.push_back(feature.mFeatureName.c_str());
+            }
+        }
+    }
 }
 
 android_namespace_t* GraphicsEnv::getAngleNamespace() {

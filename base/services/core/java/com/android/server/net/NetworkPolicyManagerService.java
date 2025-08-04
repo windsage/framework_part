@@ -314,6 +314,10 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntConsumer;
 
+//T-HUB Core[SATP]:add by jia.chen7 for sales_component.jar 20250716 start
+import com.transsion.hubcore.server.net.ITranNetworkPolicyManagerService;
+//T-HUB Core[SATP]:add by jia.chen7 for sales_component.jar 20250716 end
+
 /**
  * Service that maintains low-level network policy rules, using
  * {@link NetworkStatsService} statistics to drive those rules.
@@ -1600,6 +1604,15 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
                 if (ifacesChanged) {
                     mLogger.interfacesChanged(network.getNetId(), newIfaces);
                     updateNetworkRulesNL();
+                }
+            }
+        }
+
+        @Override
+        public void onAvailable(@NonNull Network network) {
+            synchronized (mNetworkPoliciesSecondLock) {
+                if (!SystemProperties.get("sys.statisticalsales.flag", "0").equals("1")) {
+                    ITranNetworkPolicyManagerService.Instance().startSalesTabletRegister(mContext);
                 }
             }
         }
@@ -3612,13 +3625,16 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
         final long token = Binder.clearCallingIdentity();
         try {
             config = mCarrierConfigManager.getConfigForSubId(subId);
-            tm = mContext.getSystemService(TelephonyManager.class);
+            tm = mContext.getSystemService(TelephonyManager.class).createForSubscriptionId(subId);
         } finally {
             Binder.restoreCallingIdentity(token);
         }
 
-        // First check: does caller have carrier privilege?
-        if (tm != null && tm.hasCarrierPrivileges(subId)) {
+        // First check: does callingPackage have carrier privilege?
+        // Note that we can't call TelephonyManager.hasCarrierPrivileges() which will check if
+        // ourself has carrier privileges
+        if (tm != null && (tm.checkCarrierPrivilegesForPackage(callingPackage)
+                == TelephonyManager.CARRIER_PRIVILEGE_STATUS_HAS_ACCESS)) {
             return;
         }
 

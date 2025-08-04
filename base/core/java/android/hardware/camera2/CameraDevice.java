@@ -252,6 +252,10 @@ public abstract class CameraDevice implements AutoCloseable {
             @NonNull CameraCaptureSession.StateCallback callback, @Nullable Handler handler)
             throws CameraAccessException;
 
+    /** @hide */
+    public abstract void setVendorStreamConfigMode(int index)
+            throws CameraAccessException;
+
     /**
      * <p>Create a new camera capture session by providing the target output set of Surfaces and
      * its corresponding surface configuration to the camera device.</p>
@@ -417,6 +421,7 @@ public abstract class CameraDevice implements AutoCloseable {
      *                                  or if any of the output configurations sets a stream use
      *                                  case different from {@link
      *                                  android.hardware.camera2.CameraCharacteristics#SCALER_AVAILABLE_STREAM_USE_CASES_DEFAULT}.
+     * @throws UnsupportedOperationException if the camera has been opened in shared mode
      * @see CameraExtensionCharacteristics#getSupportedExtensions
      * @see CameraExtensionCharacteristics#getExtensionSupportedSizes
      */
@@ -845,6 +850,9 @@ public abstract class CameraDevice implements AutoCloseable {
      * </table><br>
      * The same logic applies to other hardware levels and capabilities.
      * </p>
+     * <p> 10-bit output capable
+     * {@link CameraCharacteristics#REQUEST_AVAILABLE_CAPABILITIES_DYNAMIC_RANGE_TEN_BIT}
+     * devices support at least the following stream combinations: </p>
      *
      * <h5>Additional guaranteed combinations for ULTRA_HIGH_RESOLUTION sensors</h5>
      *
@@ -1180,16 +1188,6 @@ public abstract class CameraDevice implements AutoCloseable {
      * <tr> <td>{@code PRIV}</td><td id="rb">{@code MULTI_RES}</td> <td>{@code PRIV}</td><td id="rb">{@code MULTI_RES}</td> <td>{@code YUV}</td><td id="rb">{@code PREVIEW}</td> <td>{@code YUV}</td><td id="rb">{@code MULTI_RES}</td> <td></td><td id="rb"></td> <td>Maximum-resolution two-input ZSL in-app processing.</td> </tr>
      * <tr> <td>{@code PRIV}/{@code YUV}</td><td id="rb">{@code MULTI_RES}</td> <td>Same as input</td><td id="rb">{@code MULTI_RES}</td> <td>{@code PRIV}</td><td id="rb">{@code PREVIEW}</td> <td>{@code YUV}</td><td id="rb">{@code PREVIEW}</td> <td>{@code JPEG}</td><td id="rb">{@code MULTI_RES}</td> <td>ZSL still capture and in-app processing.</td> </tr>
      * </table><br>
-     * <p> Devices with the ULTRA_HIGH_RESOLUTION_SENSOR capability have some additional guarantees
-     * which clients can take advantage of : </p>
-     * <table>
-     * <tr><th colspan="13">Additional guaranteed combinations for ULTRA_HIGH_RESOLUTION sensors (YUV / PRIV inputs are guaranteed only if YUV / PRIVATE reprocessing are supported)</th></tr>
-     * <tr> <th colspan="3" id="rb">Input</th> <th colspan="3" id="rb">Target 1</th> <th colspan="3" id="rb">Target 2</th>  <th colspan="3" id="rb">Target 3</th> <th rowspan="2">Sample use case(s)</th> </tr>
-     * <tr> <th>Type</th><th id="rb"> SC Map</th><th id="rb">Max size</th><th>Type</th><th id="rb"> SC Map</th><th id="rb">Max size</th> <th>Type</th><th id="rb"> SC Map</th><th id="rb">Max size</th> <th>Type</th><th id="rb"> SC Map</th><th id="rb">Max size</th></tr>
-     * <tr> <td>{@code RAW}</td><td id="rb">{@code MAX_RES}</td><td id="rb">{@code MAX}</td><td>{@code RAW}</td><td id="rb">{@code MAX_RES}</td><td id="rb">{@code MAX}</td><td id="rb">{@code PRIV / YUV}</td><td id="rb">{@code DEFAULT}</td><td id="rb">{@code PREVIEW}</td><td colspan="3" id="rb"></td> <td>RAW remosaic reprocessing with separate preview</td> </tr>
-     * <tr> <td>{@code RAW}</td><td id="rb">{@code MAX_RES}</td><td id="rb">{@code MAX}</td><td>{@code RAW}</td><td id="rb">{@code MAX_RES}</td><td id="rb">{@code MAX}</td><td id="rb">{@code PRIV / YUV}</td><td id="rb">{@code DEFAULT}</td><td id="rb">{@code PREVIEW}</td><td id="rb">{@code JPEG / YUV}</td><td id="rb">{@code MAX_RES}</td><td id="rb">{@code MAX}</td> <td>Ultra high res RAW -> JPEG / YUV with seperate preview</td> </tr>
-     * <tr> <td>{@code YUV / PRIV}</td><td id="rb">{@code MAX_RES}</td><td id="rb">{@code MAX}</td> <td>{@code YUV / PRIV}</td><td id="rb">{@code MAX_RES}</td><td id="rb">{@code MAX}</td><td id="rb">{@code YUV / PRIV}</td><td id="rb">{@code DEFAULT}</td><td id="rb">{@code PREVIEW}</td><td id="rb">{@code JPEG }</td><td id="rb">{@code MAX_RES}</td><td id="rb">{@code MAX}</td> <td> Ultra high res PRIV / YUV -> YUV / JPEG reprocessing with seperate preview</td> </tr>
-     * </table><br>
      * No additional mandatory stream combinations for RAW capability and LEVEL-3 hardware level.
      * </p>
      *
@@ -1258,7 +1256,8 @@ public abstract class CameraDevice implements AutoCloseable {
      *                                  configurations are empty; or the session configuration
      *                                  executor is invalid;
      *                                  or the output dynamic range combination is
-     *                                  invalid/unsupported.
+     *                                  invalid/unsupported; or the session type is not shared when
+     *                                  camera has been opened in shared mode.
      * @throws CameraAccessException In case the camera device is no longer connected or has
      *                               encountered a fatal error.
      * @see #createCaptureSession(List, CameraCaptureSession.StateCallback, Handler)
@@ -1292,6 +1291,8 @@ public abstract class CameraDevice implements AutoCloseable {
      * @throws CameraAccessException if the camera device is no longer connected or has
      *                               encountered a fatal error
      * @throws IllegalStateException if the camera device has been closed
+     * @throws UnsupportedOperationException if this is not a primary client of a camera opened in
+     *                                       shared mode
      */
     @NonNull
     public abstract CaptureRequest.Builder createCaptureRequest(@RequestTemplate int templateType)
@@ -1328,6 +1329,8 @@ public abstract class CameraDevice implements AutoCloseable {
      * @throws CameraAccessException if the camera device is no longer connected or has
      *                               encountered a fatal error
      * @throws IllegalStateException if the camera device has been closed
+     * @throws UnsupportedOperationException if this is not a primary client of a camera opened in
+     *                                       shared mode
      *
      * @see #TEMPLATE_PREVIEW
      * @see #TEMPLATE_RECORD
@@ -1369,6 +1372,7 @@ public abstract class CameraDevice implements AutoCloseable {
      * @throws CameraAccessException if the camera device is no longer connected or has
      *                               encountered a fatal error
      * @throws IllegalStateException if the camera device has been closed
+     * @throws UnsupportedOperationException if the camera has been opened in shared mode
      *
      * @see CaptureRequest.Builder
      * @see TotalCaptureResult

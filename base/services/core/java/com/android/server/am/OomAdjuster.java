@@ -13,6 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+/*
+ * Changes from Qualcomm Innovation Center, Inc. are provided under the following license:
+ * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-3-Clause-Clear
+ */
 
 package com.android.server.am;
 
@@ -55,6 +60,7 @@ import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_GET_PROVIDER;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_NONE;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_PROCESS_BEGIN;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_PROCESS_END;
+import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_RECONFIGURATION;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_REMOVE_PROVIDER;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_REMOVE_TASK;
 import static android.app.ActivityManagerInternal.OOM_ADJ_REASON_RESTRICTION_CHANGE;
@@ -79,6 +85,10 @@ import static android.os.Process.THREAD_GROUP_RESTRICTED;
 import static android.os.Process.THREAD_GROUP_TOP_APP;
 import static android.os.Process.THREAD_PRIORITY_DISPLAY;
 import static android.os.Process.THREAD_PRIORITY_TOP_APP_BOOST;
+import static android.os.Process.setProcessGroup;
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+import static android.os.Process.setCgroupProcsProcessGroup;
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
 
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_ALL;
 import static com.android.server.am.ActivityManagerDebugConfig.DEBUG_BACKUP;
@@ -105,7 +115,6 @@ import static com.android.server.am.ProcessList.CACHED_APP_IMPORTANCE_LEVELS;
 import static com.android.server.am.ProcessList.CACHED_APP_MAX_ADJ;
 import static com.android.server.am.ProcessList.CACHED_APP_MIN_ADJ;
 import static com.android.server.am.ProcessList.FOREGROUND_APP_ADJ;
-import static com.android.server.am.ProcessList.FREEZER_CUTOFF_ADJ;
 import static com.android.server.am.ProcessList.HEAVY_WEIGHT_APP_ADJ;
 import static com.android.server.am.ProcessList.HOME_APP_ADJ;
 import static com.android.server.am.ProcessList.INVALID_ADJ;
@@ -155,10 +164,15 @@ import android.os.PowerManagerInternal;
 import android.os.Process;
 import android.os.RemoteException;
 import android.os.SystemClock;
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+import android.os.SystemProperties;
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
 import android.os.Trace;
-import android.os.UserHandle;
 import android.util.ArrayMap;
 import android.util.ArraySet;
+// QTI_BEGIN: 2019-06-26: Performance: perf: Use get API for perf Properties.
+import android.util.BoostFramework;
+// QTI_END: 2019-06-26: Performance: perf: Use get API for perf Properties.
 import android.util.Slog;
 import android.util.proto.ProtoOutputStream;
 
@@ -175,7 +189,13 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+//T-HUB Core[SPD]:added for animation boost by song.tang 20231027 start
+import com.transsion.hubcore.cpubooster.ITranBoostScene;
+//T-HUB Core[SPD]:added for animation boost by song.tang 20240415 end
 
+//T-HUB Core[SPD]:added for animation boost by shuqin.dong 20250509 start
+import com.transsion.hubcore.server.am.ITranOomAdjuster;
+//T-HUB Core[SPD]:added for animation boost by shuqin.dong 20250509 end
 /**
  * All of the code required to compute proc states and oom_adj values.
  */
@@ -232,6 +252,8 @@ public class OomAdjuster {
                 return AppProtoEnums.OOM_ADJ_REASON_COMPONENT_DISABLED;
             case OOM_ADJ_REASON_FOLLOW_UP:
                 return AppProtoEnums.OOM_ADJ_REASON_FOLLOW_UP;
+            case OOM_ADJ_REASON_RECONFIGURATION:
+                return AppProtoEnums.OOM_ADJ_REASON_RECONFIGURATION;
             default:
                 return AppProtoEnums.OOM_ADJ_REASON_UNKNOWN_TO_PROTO;
         }
@@ -288,6 +310,8 @@ public class OomAdjuster {
                 return OOM_ADJ_REASON_METHOD + "_componentDisabled";
             case OOM_ADJ_REASON_FOLLOW_UP:
                 return OOM_ADJ_REASON_METHOD + "_followUp";
+            case OOM_ADJ_REASON_RECONFIGURATION:
+                return OOM_ADJ_REASON_METHOD + "_reconfiguration";
             default:
                 return "_unknown";
         }
@@ -383,6 +407,53 @@ public class OomAdjuster {
     final ProcessList mProcessList;
     final ActivityManagerGlobalLock mProcLock;
 
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+    // Min aging threshold in milliseconds to consider a B-service
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+// QTI_BEGIN: 2019-06-26: Performance: perf: Use get API for perf Properties.
+    int mMinBServiceAgingTime = 5000;
+// QTI_END: 2019-06-26: Performance: perf: Use get API for perf Properties.
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+    // Threshold for B-services when in memory pressure
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+// QTI_BEGIN: 2019-06-26: Performance: perf: Use get API for perf Properties.
+    int mBServiceAppThreshold = 5;
+// QTI_END: 2019-06-26: Performance: perf: Use get API for perf Properties.
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+    // Enable B-service aging propagation on memory pressure.
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+// QTI_BEGIN: 2019-06-26: Performance: perf: Use get API for perf Properties.
+    boolean mEnableBServicePropagation = false;
+// QTI_END: 2019-06-26: Performance: perf: Use get API for perf Properties.
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+    // Process in same process Group keep in same cgroup
+    boolean mEnableProcessGroupCgroupFollow = false;
+    boolean mProcessGroupCgroupFollowDex2oatOnly = false;
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+    // Enable hooks for background apps transition
+    boolean mEnableBgt = false;
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
+// QTI_BEGIN: 2019-06-26: Performance: perf: Use get API for perf Properties.
+
+    public static BoostFramework mPerf = new BoostFramework();
+    private int mLegacyUiPerfHandler = -1;
+// QTI_END: 2019-06-26: Performance: perf: Use get API for perf Properties.
+
+// QTI_BEGIN: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+    //Per Task Boost of top-app renderThread
+    public static BoostFramework mPerfBoost = new BoostFramework();
+    public static int mPerfHandle = -1;
+// QTI_END: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+// QTI_BEGIN: 2023-12-10: Performance: Send top-app pid and renderthread tid to perf-hal
+    public static int mCurAppPid = -1;
+    public static int mCurRenderTid = -1;
+// QTI_END: 2023-12-10: Performance: Send top-app pid and renderthread tid to perf-hal
+// QTI_BEGIN: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+    public static int mCurRenderThreadTid = -1;
+    public static boolean mIsTopAppRenderThreadBoostEnabled = false;
+
+// QTI_END: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
     private final int mNumSlots;
     protected final ArrayList<ProcessRecord> mTmpProcessList = new ArrayList<ProcessRecord>();
     protected final ArrayList<ProcessRecord> mTmpProcessList2 = new ArrayList<ProcessRecord>();
@@ -437,6 +508,14 @@ public class OomAdjuster {
     @GuardedBy("mService")
     private long mNextFollowUpUpdateUptimeMs = NO_FOLLOW_UP_TIME;
 
+    /**
+     * The oom score a client needs to be to raise a service with UI out of cache.
+     */
+    private static final int CACHING_UI_SERVICE_CLIENT_ADJ_THRESHOLD =
+            Flags.raiseBoundUiServiceThreshold() ? SERVICE_ADJ : PERCEPTIBLE_APP_ADJ;
+
+    static final long PERCEPTIBLE_TASK_TIMEOUT_MILLIS = 5 * 60 * 1000;
+
     @VisibleForTesting
     public static class Injector {
         boolean isChangeEnabled(@CachedCompatChangeId int cachedCompatChangeId,
@@ -462,13 +541,6 @@ public class OomAdjuster {
         }
 
         void setThreadPriority(int tid, int priority) {
-            if (Flags.resetOnForkEnabled()) {
-                if (Process.getThreadScheduler(tid) == Process.SCHED_OTHER) {
-                    Process.setThreadScheduler(tid,
-                        Process.SCHED_OTHER | Process.SCHED_RESET_ON_FORK,
-                        0);
-                }
-            }
             Process.setThreadPriority(tid, priority);
         }
     }
@@ -514,7 +586,26 @@ public class OomAdjuster {
         mCacheOomRanker = new CacheOomRanker(service);
 
         mLogger = new OomAdjusterDebugLogger(this, mService.mConstants);
+// QTI_BEGIN: 2019-06-26: Performance: perf: Use get API for perf Properties.
+        if(mPerf != null) {
+            mMinBServiceAgingTime = Integer.valueOf(mPerf.perfGetProp("ro.vendor.qti.sys.fw.bservice_age", "5000"));
+            mBServiceAppThreshold = Integer.valueOf(mPerf.perfGetProp("ro.vendor.qti.sys.fw.bservice_limit", "5"));
+            mEnableBServicePropagation = Boolean.parseBoolean(mPerf.perfGetProp("ro.vendor.qti.sys.fw.bservice_enable", "false"));
+// QTI_END: 2019-06-26: Performance: perf: Use get API for perf Properties.
+// QTI_BEGIN: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+            mEnableProcessGroupCgroupFollow = Boolean.parseBoolean(mPerf.perfGetProp("ro.vendor.qti.cgroup_follow.enable", "false"));
+            mProcessGroupCgroupFollowDex2oatOnly = Boolean.parseBoolean(mPerf.perfGetProp("ro.vendor.qti.cgroup_follow.dex2oat_only", "false"));
+// QTI_END: 2020-04-03: Performance: cgroup follow for procs in the same cgroup.procs
+// QTI_BEGIN: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+            mIsTopAppRenderThreadBoostEnabled = Boolean.parseBoolean(mPerf.perfGetProp("vendor.perf.topAppRenderThreadBoost.enable", "false"));
+// QTI_END: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+            mEnableBgt = Boolean.parseBoolean(mPerf.perfGetProp("vendor.perf.bgt.enable","false"));
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
+// QTI_BEGIN: 2019-06-26: Performance: perf: Use get API for perf Properties.
+        }
 
+// QTI_END: 2019-06-26: Performance: perf: Use get API for perf Properties.
         mProcessGroupHandler = new Handler(adjusterThread.getLooper(), msg -> {
             final int group = msg.what;
             final ProcessRecord app = (ProcessRecord) msg.obj;
@@ -542,6 +633,9 @@ public class OomAdjuster {
         }
         try {
             android.os.Process.setProcessGroup(pid, group);
+            //T-HUB Core[SPD]:added for animation boost by song.tang 20240415 start
+            ITranBoostScene.Instance().hookSetProcessGroup(pid, group);
+            //T-HUB Core[SPD]:added for animation boost by song.tang 20240415 end
         } catch (Exception e) {
             if (DEBUG_ALL) {
                 Slog.w(TAG, "Failed setting process group of " + pid + " to " + group, e);
@@ -1366,6 +1460,11 @@ public class OomAdjuster {
         int numCachedExtraGroup = 0;
         int numEmpty = 0;
         int numTrimming = 0;
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+        ProcessRecord selectedAppRecord = null;
+        long serviceLastActivity = 0;
+        int numBServices = 0;
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
 
         boolean proactiveKillsEnabled = mConstants.PROACTIVE_KILLS_ENABLED;
         double lowSwapThresholdPercent = mConstants.LOW_SWAP_THRESHOLD_PERCENT;
@@ -1374,6 +1473,40 @@ public class OomAdjuster {
 
         for (int i = numLru - 1; i >= 0; i--) {
             ProcessRecord app = lruList.get(i);
+            if (mEnableBServicePropagation && app.mState.isServiceB()
+                    && (app.mState.getCurAdj() == ProcessList.SERVICE_B_ADJ)) {
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                numBServices++;
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                for (int s = app.mServices.numberOfRunningServices() - 1; s >= 0; s--) {
+                    ServiceRecord sr = app.mServices.getRunningServiceAt(s);
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                    if (DEBUG_OOM_ADJ) Slog.d(TAG,"app.processName = " + app.processName
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                            + " serviceb = " + app.mState.isServiceB() + " s = " + s + " sr.lastActivity = "
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                            + sr.lastActivity + " packageName = " + sr.packageName
+                            + " processName = " + sr.processName);
+                    if (SystemClock.uptimeMillis() - sr.lastActivity
+                            < mMinBServiceAgingTime) {
+                        if (DEBUG_OOM_ADJ) {
+                            Slog.d(TAG,"Not aged enough!!!");
+                        }
+                        continue;
+                    }
+                    if (serviceLastActivity == 0) {
+                        serviceLastActivity = sr.lastActivity;
+                        selectedAppRecord = app;
+                    } else if (sr.lastActivity < serviceLastActivity) {
+                        serviceLastActivity = sr.lastActivity;
+                        selectedAppRecord = app;
+                    }
+                }
+            }
+            if (DEBUG_OOM_ADJ && selectedAppRecord != null) Slog.d(TAG,
+                    "Identified app.processName = " + selectedAppRecord.processName
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                    + " app.pid = " + selectedAppRecord.getPid());
             final ProcessStateRecord state = app.mState;
             if (!app.isKilledByAm() && app.getThread() != null) {
                 if (!Flags.fixApplyOomadjOrder()) {
@@ -1514,6 +1647,23 @@ public class OomAdjuster {
 
         mLastFreeSwapPercent = freeSwapPercent;
 
+        if ((numBServices > mBServiceAppThreshold) && (true == mService.mAppProfiler.allowLowerMemLevelLocked())
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                && (selectedAppRecord != null)) {
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+            ProcessList.setOomAdj(selectedAppRecord.getPid(), selectedAppRecord.info.uid,
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                    ProcessList.CACHED_APP_MAX_ADJ);
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+            selectedAppRecord.mState.setSetAdj(selectedAppRecord.mState.getCurAdj());
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+            if (DEBUG_OOM_ADJ) Slog.d(TAG,"app.processName = " + selectedAppRecord.processName
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+                        + " app.pid = " + selectedAppRecord.getPid() + " is moved to higher adj");
+// QTI_BEGIN: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
+        }
+
+// QTI_END: 2019-02-12: Performance: Refactor B-services from AMS to OomAdjuster.
         mService.mAppProfiler.updateLowMemStateLSP(numCached, numEmpty, numTrimming, now);
     }
 
@@ -1672,8 +1822,11 @@ public class OomAdjuster {
                     }
                     if ((uidChange & UidRecord.CHANGE_PROCSTATE) != 0
                             || (uidChange & UidRecord.CHANGE_CAPABILITY) != 0) {
-                        mService.noteUidProcessState(uidRec.getUid(), uidRec.getCurProcState(),
-                                uidRec.getCurCapability());
+                        mService.noteUidProcessStateAndCapability(uidRec.getUid(),
+                                uidRec.getCurProcState(), uidRec.getCurCapability());
+                    }
+                    if ((uidChange & UidRecord.CHANGE_PROCSTATE) != 0) {
+                        mService.noteUidProcessState(uidRec.getUid(), uidRec.getCurProcState());
                     }
                     if (uidRec.hasForegroundServices()) {
                         mService.mServices.foregroundServiceProcStateChangedLocked(uidRec);
@@ -1842,13 +1995,35 @@ public class OomAdjuster {
             mHasVisibleActivities = false;
         }
 
-        void onOtherActivity() {
+        void onOtherActivity(long perceptibleTaskStoppedTimeMillis) {
             if (procState > PROCESS_STATE_CACHED_ACTIVITY) {
                 procState = PROCESS_STATE_CACHED_ACTIVITY;
                 mAdjType = "cch-act";
                 if (DEBUG_OOM_ADJ_REASON || logUid == appUid) {
                     reportOomAdjMessageLocked(TAG_OOM_ADJ,
                             "Raise procstate to cached activity: " + app);
+                }
+            }
+            if (Flags.perceptibleTasks() && adj > PERCEPTIBLE_MEDIUM_APP_ADJ) {
+                if (perceptibleTaskStoppedTimeMillis >= 0) {
+                    final long now = mInjector.getUptimeMillis();
+                    if (now - perceptibleTaskStoppedTimeMillis < PERCEPTIBLE_TASK_TIMEOUT_MILLIS) {
+                        adj = PERCEPTIBLE_MEDIUM_APP_ADJ;
+                        mAdjType = "perceptible-act";
+                        if (procState > PROCESS_STATE_IMPORTANT_BACKGROUND) {
+                            procState = PROCESS_STATE_IMPORTANT_BACKGROUND;
+                        }
+
+                        maybeSetProcessFollowUpUpdateLocked(app,
+                                perceptibleTaskStoppedTimeMillis + PERCEPTIBLE_TASK_TIMEOUT_MILLIS,
+                                now);
+                    } else if (adj > PREVIOUS_APP_ADJ) {
+                        adj = PREVIOUS_APP_ADJ;
+                        mAdjType = "stale-perceptible-act";
+                        if (procState > PROCESS_STATE_LAST_ACTIVITY) {
+                            procState = PROCESS_STATE_LAST_ACTIVITY;
+                        }
+                    }
                 }
             }
             mHasVisibleActivities = false;
@@ -2018,6 +2193,50 @@ public class OomAdjuster {
             }
             hasVisibleActivities = true;
             procState = PROCESS_STATE_TOP;
+
+// QTI_BEGIN: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+            if(mIsTopAppRenderThreadBoostEnabled) {
+// QTI_END: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+                if(mCurRenderThreadTid != app.getRenderThreadTid() && app.getRenderThreadTid() > 0) {
+                    mCurRenderThreadTid = app.getRenderThreadTid();
+// QTI_BEGIN: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+                    if (mPerfBoost != null) {
+// QTI_END: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+                        Slog.d(TAG, "TOP-APP: pid:" + app.getPid() + ", processName: "
+                               + app.processName + ", renderThreadTid: " + app.getRenderThreadTid());
+// QTI_BEGIN: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+                        if (mPerfHandle >= 0) {
+                            mPerfBoost.perfLockReleaseHandler(mPerfHandle);
+                            mPerfHandle = -1;
+                        }
+                        mPerfHandle = mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_BOOST_RENDERTHREAD,
+// QTI_END: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+                                                          app.processName, app.getRenderThreadTid(), 1);
+// QTI_BEGIN: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+                        Slog.d(TAG, "VENDOR_HINT_BOOST_RENDERTHREAD perfHint was called. mPerfHandle: "
+                               + mPerfHandle);
+                    }
+                }
+            }
+
+// QTI_END: 2020-06-16: Performance: Send top-app's render thread tid to perf HAL
+// QTI_BEGIN: 2023-12-10: Performance: Send top-app pid and renderthread tid to perf-hal
+            if (mCurAppPid != app.getPid() && app.getPid() > 0) {
+                mCurAppPid = app.getPid();
+                if (mPerfBoost != null) {
+                    mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_PASS_PID, app.processName,
+                                        mCurAppPid, BoostFramework.PassPid.APP_PID);
+                }
+            }
+            if (mCurRenderTid != app.getRenderThreadTid() && app.getRenderThreadTid() > 0) {
+                mCurRenderTid = app.getRenderThreadTid();
+                if (mPerfBoost != null) {
+                    mPerfBoost.perfHint(BoostFramework.VENDOR_HINT_PASS_PID, app.processName,
+                                        mCurRenderTid, BoostFramework.PassPid.RENDER_TID);
+                }
+            }
+
+// QTI_END: 2023-12-10: Performance: Send top-app pid and renderthread tid to perf-hal
             if (DEBUG_OOM_ADJ_REASON || logUid == appUid) {
                 reportOomAdjMessageLocked(TAG_OOM_ADJ, "Making top: " + app);
             }
@@ -2614,7 +2833,7 @@ public class OomAdjuster {
         }
 
         capability |= getDefaultCapability(app, procState);
-        capability |= getCpuCapability(app, now);
+        capability |= getCpuCapability(app, now, foregroundActivities);
 
         // Procstates below BFGS should never have this capability.
         if (procState > PROCESS_STATE_BOUND_FOREGROUND_SERVICE) {
@@ -2773,7 +2992,7 @@ public class OomAdjuster {
         // we check the final procstate, and remove it if the procsate is below BFGS.
         capability |= getBfslCapabilityFromClient(client);
 
-        capability |= getCpuCapabilityFromClient(client);
+        capability |= getCpuCapabilityFromClient(cr, client);
 
         if (cr.notHasFlag(Context.BIND_WAIVE_PRIORITY)) {
             if (cr.hasFlag(Context.BIND_INCLUDE_CAPABILITIES)) {
@@ -2840,7 +3059,6 @@ public class OomAdjuster {
                             return true;
                         }
                     }
-                    capability |= PROCESS_CAPABILITY_CPU_TIME;
                 }
                 // Not doing bind OOM management, so treat
                 // this guy more like a started service.
@@ -2876,15 +3094,12 @@ public class OomAdjuster {
                 }
             }
             if (adj > clientAdj) {
-                // If this process has recently shown UI, and
-                // the process that is binding to it is less
-                // important than being visible, then we don't
-                // care about the binding as much as we care
-                // about letting this process get into the LRU
-                // list to be killed and restarted if needed for
-                // memory.
+                // If this process has recently shown UI, and the process that is binding to it
+                // is less important than a state that can be actively running, then we don't
+                // care about the binding as much as we care about letting this process get into
+                // the LRU list to be killed and restarted if needed for memory.
                 if (state.hasShownUi() && !state.getCachedIsHomeProcess()
-                        && clientAdj > PERCEPTIBLE_APP_ADJ) {
+                        && clientAdj > CACHING_UI_SERVICE_CLIENT_ADJ_THRESHOLD) {
                     if (adj >= CACHED_APP_MIN_ADJ) {
                         adjType = "cch-bound-ui-services";
                     }
@@ -3089,7 +3304,6 @@ public class OomAdjuster {
                         return true;
                     }
                 }
-                capability |= PROCESS_CAPABILITY_CPU_TIME;
             }
         }
         if (cr.hasFlag(Context.BIND_TREAT_LIKE_ACTIVITY)) {
@@ -3235,7 +3449,7 @@ public class OomAdjuster {
         // we check the final procstate, and remove it if the procsate is below BFGS.
         capability |= getBfslCapabilityFromClient(client);
 
-        capability |= getCpuCapabilityFromClient(client);
+        capability |= getCpuCapabilityFromClient(conn, client);
 
         if (clientProcState >= PROCESS_STATE_CACHED_ACTIVITY) {
             // If the other app is cached for any reason, for purposes here
@@ -3398,22 +3612,32 @@ public class OomAdjuster {
         return baseCapabilities | networkCapabilities;
     }
 
-    private static int getCpuCapability(ProcessRecord app, long nowUptime) {
+    private static int getCpuCapability(ProcessRecord app, long nowUptime,
+            boolean hasForegroundActivities) {
+        // Note: persistent processes get all capabilities, including CPU_TIME.
         final UidRecord uidRec = app.getUidRecord();
         if (uidRec != null && uidRec.isCurAllowListed()) {
-            // Process has user visible activities.
+            // Process is in the power allowlist.
             return PROCESS_CAPABILITY_CPU_TIME;
         }
-        if (UserHandle.isCore(app.uid)) {
-            // Make sure all system components are not frozen.
+        if (hasForegroundActivities) {
+            // TODO: b/402987519 - This grants the Top Sleeping process CPU_TIME but eventually
+            //  should not.
+            // Process has user perceptible activities.
             return PROCESS_CAPABILITY_CPU_TIME;
         }
-        if (app.mState.getCachedHasVisibleActivities()) {
-            // Process has user visible activities.
+        if (Flags.prototypeAggressiveFreezing()) {
+            if (app.mServices.hasUndemotedShortForegroundService(nowUptime)) {
+                // Grant cpu time for short FGS even when aggressively freezing.
+                return PROCESS_CAPABILITY_CPU_TIME;
+            }
+        } else if (app.mServices.hasForegroundServices()) {
             return PROCESS_CAPABILITY_CPU_TIME;
         }
-        if (app.mServices.hasUndemotedShortForegroundService(nowUptime)) {
-            // It running a short fgs, just give it cpu time.
+        if (app.mReceivers.numberOfCurReceivers() > 0) {
+            return PROCESS_CAPABILITY_CPU_TIME;
+        }
+        if (app.hasActiveInstrumentation()) {
             return PROCESS_CAPABILITY_CPU_TIME;
         }
         // TODO(b/370817323): Populate this method with all of the reasons to keep a process
@@ -3471,10 +3695,13 @@ public class OomAdjuster {
     /**
      * @return the CPU capability from a client (of a service binding or provider).
      */
-    private static int getCpuCapabilityFromClient(ProcessRecord client) {
-        // Just grant CPU capability every time
-        // TODO(b/370817323): Populate with reasons to not propagate cpu capability across bindings.
-        return client.mState.getCurCapability() & PROCESS_CAPABILITY_CPU_TIME;
+    private static int getCpuCapabilityFromClient(OomAdjusterModernImpl.Connection conn,
+            ProcessRecord client) {
+        if (conn == null || conn.transmitsCpuTime()) {
+            return client.mState.getCurCapability() & PROCESS_CAPABILITY_CPU_TIME;
+        } else {
+            return 0;
+        }
     }
 
     /**
@@ -3552,6 +3779,29 @@ public class OomAdjuster {
             state.setSetRawAdj(state.getCurRawAdj());
         }
 
+// QTI_BEGIN: 2025-01-02: Performance: app freezer: Uncomment app freezer by Google
+        ProcessFreezerManager freezer = ProcessFreezerManager.getInstance();
+// QTI_END: 2025-01-02: Performance: app freezer: Uncomment app freezer by Google
+// QTI_BEGIN: 2024-05-22: Performance: framework_base: Add process freezer to improve app launch latency
+        if (freezer != null && freezer.useFreezerManager()) {
+            // unfreeze process if user press home key before the first frame appeared
+            if ((state.getSetAdj() >= ProcessList.FOREGROUND_APP_ADJ &&
+                        state.getSetAdj() <= ProcessList.VISIBLE_APP_ADJ) &&
+                        state.getCurAdj() > ProcessList.VISIBLE_APP_ADJ) {
+                freezer.startUnfreeze(app.processName,
+                        ProcessFreezerManager.INTERRUPT_LAUNCH_UNFREEZE);
+            }
+            // check whether process/service that launching app depend on is in the freeze list
+            if (state.getSetAdj() >= state.getCurAdj() &&
+                        state.getCurAdj() <= ProcessList.VISIBLE_APP_ADJ) {
+                if (freezer.checkNeedFreezeProcessLocked(app)) {
+                    freezer.startUnfreezeService(app,
+                            ProcessFreezerManager.DEPEND_LAUNCH_UNFREEZE);
+                }
+            }
+        }
+
+// QTI_END: 2024-05-22: Performance: framework_base: Add process freezer to improve app launch latency
         int changes = 0;
 
         if (state.getCurAdj() != state.getSetAdj()) {
@@ -3560,10 +3810,49 @@ public class OomAdjuster {
 
         final int oldOomAdj = state.getSetAdj();
         if (state.getCurAdj() != state.getSetAdj()) {
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+            // Hooks for background apps transition
+            if (mEnableBgt) {
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
+                if ((state.getSetAdj() >= ProcessList.CACHED_APP_MIN_ADJ &&
+                        state.getSetAdj() <= ProcessList.CACHED_APP_MAX_ADJ) &&
+                        state.getCurAdj() == ProcessList.FOREGROUND_APP_ADJ &&
+                            state.hasForegroundActivities()) {
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+                    Slog.d(TAG,"App adj change from cached state to fg state : "
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
+                            + app.getPid() + " " + app.processName);
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+                    if (mPerf != null) {
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
+                        int fgAppPerfLockArgs[] = {BoostFramework.MPCTLV3_GPU_IS_APP_FG, app.getPid()};
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+                        mPerf.perfLockAcquire(10, fgAppPerfLockArgs);
+                    }
+                }
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
+                if(state.getSetAdj() == ProcessList.PREVIOUS_APP_ADJ &&
+                        (state.getCurAdj() >= ProcessList.CACHED_APP_MIN_ADJ &&
+                        state.getCurAdj() <= ProcessList.CACHED_APP_MAX_ADJ) &&
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+                            app.hasActivities()) {
+                    Slog.d(TAG,"App adj change from previous state to cached state : "
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
+                            + app.getPid() + " " + app.processName);
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+                    if (mPerf != null) {
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
+                        int bgAppPerfLockArgs[] = {BoostFramework.MPCTLV3_GPU_IS_APP_BG, app.getPid()};
+// QTI_BEGIN: 2020-07-09: Performance: Hooks for background apps transition
+                        mPerf.perfLockAcquire(10, bgAppPerfLockArgs);
+                    }
+                }
+            }
+// QTI_END: 2020-07-09: Performance: Hooks for background apps transition
             if (isBatchingOomAdj && mConstants.ENABLE_BATCHING_OOM_ADJ) {
                 mProcsToOomAdj.add(app);
             } else {
-                mInjector.setOomAdj(app.getPid(), app.uid, state.getCurAdj());
+                mInjector.setOomAdj(app.getPid(), app.uid, app.mState.getCurAdj());
             }
 
             if (DEBUG_SWITCH || DEBUG_OOM_ADJ || mService.mCurOomAdjUid == app.info.uid) {
@@ -3612,10 +3901,34 @@ public class OomAdjuster {
                     processGroup = THREAD_GROUP_DEFAULT;
                     break;
             }
-            setAppAndChildProcessGroup(app, processGroup);
+            //SPD:added for LI9H335-3353 by yunjun.yang 20240130 start
+            if (!ITranOomAdjuster.Instance().setProcessGroupAegean(app, processGroup,
+                    curSchedGroup, state.getAdjType())) {
+                //SPD:added for LI9H335-3353 by yunjun.yang 20240130 end
+                setAppAndChildProcessGroup(app, processGroup);
+                //SPD:added for LI9H335-3353 by yunjun.yang 20240130 start
+            }
+            //SPD:added for LI9H335-3353 by yunjun.yang 20240130 end
             try {
                 final int renderThreadTid = app.getRenderThreadTid();
                 if (curSchedGroup == SCHED_GROUP_TOP_APP) {
+                    /* QTI_BEGIN */
+                    if (mLegacyUiPerfHandler == -1) {
+                        int hint = mPerf.getLegacyUiPerfHint(mService.mContext,
+                                                             app.info.packageName);
+                        if (hint != -1) {
+                            mLegacyUiPerfHandler = mPerf.perfHint(hint, "android",
+                                                        Integer.MAX_VALUE, -1);
+                        }
+                    } else {
+                        int hint = mPerf.getLegacyUiPerfHint(mService.mContext,
+                                                             app.info.packageName);
+                        if (hint == -1) {
+                            mPerf.perfLockReleaseHandler(mLegacyUiPerfHandler);
+                            mLegacyUiPerfHandler = -1;
+                        }
+                    }
+                    /* QTI_END */
                     // do nothing if we already switched to RT
                     if (oldSchedGroup != SCHED_GROUP_TOP_APP) {
                         app.getWindowProcessController().onTopProcChanged();
@@ -3968,6 +4281,9 @@ public class OomAdjuster {
                         uidRec.setSetIdle(true);
                         uidRec.setLastIdleTime(nowElapsed);
                     }
+                    //T-HUB Core[SPD]:added for pm by na.liu 20220706 start
+                    ITranOomAdjuster.Instance().hookUidChangedIdle(uidRec.getUid());
+                    //T-HUB Core[SPD]:added for pm by na.liu 20220706 start
                     mService.doStopUidLocked(uidRec.getUid(), uidRec);
                 } else {
                     if (nextTime == 0 || nextTime > bgTime) {
@@ -4047,7 +4363,6 @@ public class OomAdjuster {
                 + " mNewNumServiceProcs=" + mNewNumServiceProcs);
     }
 
-    @GuardedBy("mProcLock")
     void dumpCachedAppOptimizerSettings(PrintWriter pw) {
         mCachedAppOptimizer.dump(pw);
     }
@@ -4081,7 +4396,7 @@ public class OomAdjuster {
         }
 
         // Reasons to freeze:
-        if (proc.mState.getCurAdj() >= FREEZER_CUTOFF_ADJ) {
+        if (proc.mState.getCurAdj() >= mConstants.FREEZER_CUTOFF_ADJ) {
             // Oomscore is in a high enough state, it is safe to freeze.
             return true;
         }
@@ -4097,12 +4412,12 @@ public class OomAdjuster {
             return;
         }
 
+        final boolean freezePolicy = getFreezePolicy(app);
         final ProcessCachedOptimizerRecord opt = app.mOptRecord;
         final ProcessStateRecord state = app.mState;
         if (Flags.traceUpdateAppFreezeStateLsp()) {
-            final boolean oomAdjChanged =
-                    (state.getCurAdj() >= FREEZER_CUTOFF_ADJ ^ oldOomAdj >= FREEZER_CUTOFF_ADJ)
-                    || oldOomAdj == UNKNOWN_ADJ;
+            final boolean oomAdjChanged = (state.getCurAdj() >= mConstants.FREEZER_CUTOFF_ADJ
+                    ^ oldOomAdj >= mConstants.FREEZER_CUTOFF_ADJ) || oldOomAdj == UNKNOWN_ADJ;
             final boolean shouldNotFreezeChanged = opt.shouldNotFreezeAdjSeq() == mAdjSeq;
             final boolean hasCpuCapability =
                     (PROCESS_CAPABILITY_CPU_TIME & app.mState.getCurCapability())
@@ -4113,6 +4428,21 @@ public class OomAdjuster {
             final boolean cpuCapabilityChanged = hasCpuCapability != usedToHaveCpuCapability;
             if ((oomAdjChanged || shouldNotFreezeChanged || cpuCapabilityChanged)
                     && Trace.isTagEnabled(Trace.TRACE_TAG_ACTIVITY_MANAGER)) {
+                Trace.instantForTrack(Trace.TRACE_TAG_ACTIVITY_MANAGER,
+                        "FreezeLite",
+                        (opt.isFrozen() ? "F" : "-")
+                        + (opt.isPendingFreeze() ? "P" : "-")
+                        + (opt.isFreezeExempt() ? "E" : "-")
+                        + (opt.shouldNotFreeze() ? "N" : "-")
+                        + (hasCpuCapability ? "T" : "-")
+                        + (immediate ? "I" : "-")
+                        + (freezePolicy ? "Z" : "-")
+                        + (Flags.useCpuTimeCapability() ? "t" : "-")
+                        + (Flags.prototypeAggressiveFreezing() ? "a" : "-")
+                        + "/" + app.getPid()
+                        + "/" + state.getCurAdj()
+                        + "/" + oldOomAdj
+                        + "/" + opt.shouldNotFreezeReason());
                 Trace.instantForTrack(Trace.TRACE_TAG_ACTIVITY_MANAGER,
                         CachedAppOptimizer.ATRACE_FREEZER_TRACK,
                         "updateAppFreezeStateLSP " + app.processName
@@ -4128,7 +4458,7 @@ public class OomAdjuster {
             }
         }
 
-        if (getFreezePolicy(app)) {
+        if (freezePolicy) {
             // This process should be frozen.
             if (immediate && !opt.isFrozen()) {
                 // And it will be frozen immediately.
@@ -4243,6 +4573,11 @@ public class OomAdjuster {
                         != client.getSetCapability()) {
             // The connection might elevate the importance of the service's capabilities.
             needDryRun = true;
+        } else if (Flags.useCpuTimeCapability()
+                && (client.getSetCapability() & ~app.getSetCapability()
+                    & PROCESS_CAPABILITY_CPU_TIME) != 0) {
+            // The connection might grant PROCESS_CAPABILITY_CPU_TIME to the service.
+            needDryRun = true;
         } else if (Flags.unfreezeBindPolicyFix()
                 && cr.hasFlag(Context.BIND_WAIVE_PRIORITY
                             | Context.BIND_ALLOW_OOM_MANAGEMENT)) {
@@ -4290,6 +4625,10 @@ public class OomAdjuster {
                 && client.mOptRecord.shouldNotFreeze()) {
             // Process has shouldNotFreeze and it could have gotten it from the client.
             return true;
+        } else if (Flags.useCpuTimeCapability()
+                && (client.getSetCapability() & app.getSetCapability()
+                    & PROCESS_CAPABILITY_CPU_TIME) != 0) {
+            return true;
         }
         return false;
     }
@@ -4308,6 +4647,11 @@ public class OomAdjuster {
         } else if (Flags.unfreezeBindPolicyFix()
                 && client.mOptRecord.shouldNotFreeze()
                 && !app.mOptRecord.shouldNotFreeze()) {
+            needDryRun = true;
+        } else if (Flags.useCpuTimeCapability()
+                && (client.getSetCapability() & ~app.getSetCapability()
+                    & PROCESS_CAPABILITY_CPU_TIME) != 0) {
+            // The connection might grant PROCESS_CAPABILITY_CPU_TIME to the provider.
             needDryRun = true;
         }
 
@@ -4334,6 +4678,10 @@ public class OomAdjuster {
                 && app.mOptRecord.shouldNotFreeze()
                 && client.mOptRecord.shouldNotFreeze()) {
             // Process has shouldNotFreeze and it could have gotten it from the client.
+            return true;
+        } else if (Flags.useCpuTimeCapability()
+                && (client.getSetCapability() & app.getSetCapability()
+                    & PROCESS_CAPABILITY_CPU_TIME) != 0) {
             return true;
         }
 

@@ -44,6 +44,8 @@ public class FeatureFlagUtils {
     public static final String SETTINGS_DO_NOT_RESTORE_PRESERVED =
             "settings_do_not_restore_preserved";
     /** @hide */
+    public static final String SETTINGS_PROVIDER_MODEL = "settings_provider_model";
+    /** @hide */
     public static final String SETTINGS_USE_NEW_BACKUP_ELIGIBILITY_RULES
             = "settings_use_new_backup_eligibility_rules";
     /** @hide */
@@ -98,13 +100,6 @@ public class FeatureFlagUtils {
      * @hide
      */
     public static final String SETTINGS_NEW_KEYBOARD_TRACKPAD = "settings_new_keyboard_trackpad";
-
-    /**
-     * Enable trackpad gesture settings UI
-     * @hide
-     */
-    public static final String SETTINGS_NEW_KEYBOARD_TRACKPAD_GESTURE =
-            "settings_new_keyboard_trackpad_gesture";
 
     /**
      * Enable the new pages which is implemented with SPA.
@@ -200,6 +195,7 @@ public class FeatureFlagUtils {
 
         DEFAULT_FLAGS.put("settings_tether_all_in_one", "false");
         DEFAULT_FLAGS.put("settings_contextual_home", "false");
+        DEFAULT_FLAGS.put(SETTINGS_PROVIDER_MODEL, "false");
         DEFAULT_FLAGS.put(SETTINGS_USE_NEW_BACKUP_ELIGIBILITY_RULES, "true");
         DEFAULT_FLAGS.put(SETTINGS_ENABLE_SECURITY_HUB, "true");
         DEFAULT_FLAGS.put(SETTINGS_SUPPORT_LARGE_SCREEN, "true");
@@ -211,7 +207,6 @@ public class FeatureFlagUtils {
         DEFAULT_FLAGS.put(SETTINGS_NEED_CONNECTED_BLE_DEVICE_FOR_BROADCAST, "true");
         DEFAULT_FLAGS.put(SETTINGS_NEW_KEYBOARD_MODIFIER_KEY, "true");
         DEFAULT_FLAGS.put(SETTINGS_NEW_KEYBOARD_TRACKPAD, "true");
-        DEFAULT_FLAGS.put(SETTINGS_NEW_KEYBOARD_TRACKPAD_GESTURE, "false");
         DEFAULT_FLAGS.put(SETTINGS_ENABLE_SPA, "true");
         DEFAULT_FLAGS.put(SETTINGS_ENABLE_SPA_PHASE2, "false");
         DEFAULT_FLAGS.put(SETTINGS_ENABLE_SPA_METRICS, "true");
@@ -235,9 +230,9 @@ public class FeatureFlagUtils {
         PERSISTENT_FLAGS.add(SETTINGS_SUPPORT_LARGE_SCREEN);
         PERSISTENT_FLAGS.add(SETTINGS_ENABLE_MONITOR_PHANTOM_PROCS);
         PERSISTENT_FLAGS.add(SETTINGS_APP_ALLOW_DARK_THEME_ACTIVATION_AT_BEDTIME);
+        PERSISTENT_FLAGS.add(SETTINGS_PROVIDER_MODEL);
         PERSISTENT_FLAGS.add(SETTINGS_NEW_KEYBOARD_MODIFIER_KEY);
         PERSISTENT_FLAGS.add(SETTINGS_NEW_KEYBOARD_TRACKPAD);
-        PERSISTENT_FLAGS.add(SETTINGS_NEW_KEYBOARD_TRACKPAD_GESTURE);
         PERSISTENT_FLAGS.add(SETTINGS_ENABLE_SPA);
         PERSISTENT_FLAGS.add(SETTINGS_ENABLE_SPA_PHASE2);
         PERSISTENT_FLAGS.add(SETTINGS_PREFER_ACCESSIBILITY_MENU_IN_SYSTEM);
@@ -250,6 +245,11 @@ public class FeatureFlagUtils {
      * @return true if the flag is enabled (either by default in system, or override by user)
      */
     public static boolean isEnabled(Context context, String feature) {
+        // Hide feature in SC Developer Preview
+        if (SETTINGS_PROVIDER_MODEL.equals(feature)) {
+            return false;
+        }
+
         // Override precedence:
         // Settings.Global -> sys.fflag.override.* -> static list
 
